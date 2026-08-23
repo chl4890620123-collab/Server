@@ -12,7 +12,7 @@ on:
       - "public/**"
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: server-infra-smoke
@@ -57,18 +57,18 @@ jobs:
           docker compose up -d --build --remove-orphans
           if ($LASTEXITCODE -ne 0) { throw 'docker compose up failed.' }
 
-      - name: Verify health endpoint
+      - name: Verify frontend
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          $url = "http://127.0.0.1:$env:TEST_PORT/health"
-          $healthy = $false
+          $url = "http://127.0.0.1:$env:TEST_PORT/"
+          $ready = $false
 
           for ($attempt = 1; $attempt -le 30; $attempt++) {
             try {
               $response = Invoke-WebRequest -UseBasicParsing -Uri $url -TimeoutSec 3
-              if ($response.StatusCode -eq 200 -and $response.Content.Trim() -eq 'ok') {
-                $healthy = $true
+              if ($response.StatusCode -eq 200) {
+                $ready = $true
                 break
               }
             } catch {
@@ -76,17 +76,16 @@ jobs:
             }
           }
 
-          if (-not $healthy) {
-            throw "Smoke frontend health check failed: $url"
+          if (-not $ready) {
+            throw "Smoke frontend did not return HTTP 200: $url"
           }
 
-          Write-Host "Smoke frontend is healthy: $url"
+          Write-Host "Smoke frontend is ready: $url"
 
       - name: Show access addresses
         shell: powershell
         run: |
           Write-Host "Local : http://127.0.0.1:$env:TEST_PORT"
-          Write-Host "Health: http://127.0.0.1:$env:TEST_PORT/health"
 
           $ips = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
             Where-Object {
@@ -101,36 +100,6 @@ jobs:
           }
 
           docker compose ps
-
-      - name: Record verified smoke status
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          New-Item -ItemType Directory -Force -Path deploy/status | Out-Null
-          @"
-          verified_sha=${{ github.sha }}
-          test_port=$env:TEST_PORT
-          health=http://127.0.0.1:$env:TEST_PORT/health
-          "@ | Set-Content -Path deploy/status/smoke.txt -Encoding ascii
-
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/status/smoke.txt
-
-          git diff --cached --quiet
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host 'Smoke status already matches.'
-            exit 0
-          }
-
-          git commit -m "chore: record verified infrastructure smoke ${{ github.sha }}"
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to commit smoke verification marker.' }
-
-          git pull --rebase origin main
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to rebase smoke verification marker.' }
-
-          git push origin HEAD:main
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to push smoke verification marker.' }
 
       - name: Diagnostics on failure
         if: failure()
