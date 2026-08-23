@@ -7,6 +7,28 @@ $DeployScript = Join-Path $ServerRoot "deploy\scripts\deploy-maple.ps1"
 $PublishScript = Join-Path $ServerRoot "deploy\scripts\publish-maple-status.ps1"
 $DockerRuntimeRoot = "D:\server-data\maple\runtime\docker-cli"
 
+function Get-ContainerLogsSafe([string]$Name, [int]$Tail = 80) {
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    try {
+        $exists = (docker ps -a --filter "name=^/$Name$" --format "{{.Names}}" 2>$null | Out-String).Trim()
+        if ($LASTEXITCODE -ne 0 -or $exists -ne $Name) {
+            return "<container not created: $Name>"
+        }
+        $text = (docker logs --tail $Tail $Name 2>&1 | Out-String)
+        if ([string]::IsNullOrWhiteSpace($text)) {
+            return "<no logs: $Name>"
+        }
+        return $text
+    }
+    catch {
+        return "<failed to read logs: $Name>"
+    }
+    finally {
+        $ErrorActionPreference = $oldPreference
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $StatusRoot | Out-Null
 
 # Docker Desktop's default config can use the Windows credential manager.
@@ -45,11 +67,26 @@ try {
 catch {
     $failedAt = (Get-Date).ToUniversalTime().ToString("o")
     $message = $_.Exception.Message
-    $dockerPs = (docker ps -a 2>&1 | Out-String)
-    $dbLogs = (docker logs --tail 80 maple-db 2>&1 | Out-String)
-    $appLogs = (docker logs --tail 80 maple-app 2>&1 | Out-String)
-    $caddyLogs = (docker logs --tail 80 maple-caddy 2>&1 | Out-String)
-    $tunnelLogs = (docker logs --tail 120 maple-public-tunnel 2>&1 | Out-String)
+
+    Write-Host "=== MAPLE DEPLOYMENT FAILURE ==="
+    Write-Host "message=$message"
+
+    $oldPreference = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    try {
+        $dockerPs = (docker ps -a 2>&1 | Out-String)
+    }
+    catch {
+        $dockerPs = "<failed to run docker ps>"
+    }
+    finally {
+        $ErrorActionPreference = $oldPreference
+    }
+
+    $dbLogs = Get-ContainerLogsSafe "maple-db" 80
+    $appLogs = Get-ContainerLogsSafe "maple-app" 80
+    $caddyLogs = Get-ContainerLogsSafe "maple-caddy" 80
+    $tunnelLogs = Get-ContainerLogsSafe "maple-public-tunnel" 120
 
     @"
 failed_at_utc=$failedAt
@@ -67,7 +104,6 @@ $caddyLogs
 $tunnelLogs
 "@ | Set-Content -Path $ErrorFile -Encoding utf8
 
-    Write-Host "=== MAPLE DEPLOYMENT FAILURE ==="
     Get-Content $ErrorFile | ForEach-Object { Write-Host $_ }
 
     if ($env:GH_TOKEN) {
