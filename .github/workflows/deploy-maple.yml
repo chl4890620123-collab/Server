@@ -25,7 +25,7 @@ permissions:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 35
 
     steps:
       - name: Checkout Server repository
@@ -68,6 +68,75 @@ jobs:
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+
+      - name: Set up Python for new Maple revision
+        if: steps.image_check.outputs.exists != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install Maple test dependencies
+        if: steps.image_check.outputs.exists != 'true'
+        shell: bash
+        working-directory: sources/maple
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest
+
+      - name: Run SQLite regression tests
+        if: steps.image_check.outputs.exists != 'true'
+        shell: bash
+        working-directory: sources/maple
+        env:
+          DB_ENGINE: sqlite
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. pytest -q
+
+      - name: Start MariaDB integration database
+        if: steps.image_check.outputs.exists != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name maple-central-ci-db \
+            -e MARIADB_DATABASE=maple_craft \
+            -e MARIADB_USER=maple_app \
+            -e MARIADB_PASSWORD=maple_ci_password \
+            -e MARIADB_ROOT_PASSWORD=maple_ci_root_password \
+            -p 127.0.0.1:33308:3306 \
+            mariadb:11.4
+
+          for attempt in $(seq 1 30); do
+            status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' maple-central-ci-db 2>/dev/null || true)"
+            if [ "$status" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+
+          docker logs maple-central-ci-db
+          exit 1
+
+      - name: Run MariaDB integration regression tests
+        if: steps.image_check.outputs.exists != 'true'
+        shell: bash
+        working-directory: sources/maple
+        env:
+          DB_ENGINE: mariadb
+          DB_HOST: 127.0.0.1
+          DB_PORT: 33308
+          DB_NAME: maple_craft
+          DB_USER: maple_app
+          DB_PASSWORD: maple_ci_password
+        run: |
+          set -euo pipefail
+          PYTHONPATH=. pytest -q
+
+      - name: Stop MariaDB integration database
+        if: always() && steps.image_check.outputs.exists != 'true'
+        shell: bash
+        run: docker rm -f maple-central-ci-db >/dev/null 2>&1 || true
 
       - name: Build and push Maple image
         if: steps.image_check.outputs.exists != 'true'
