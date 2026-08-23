@@ -1,1 +1,3 @@
 ssh_fallback_available=true
+ssh_connection=success
+deployment=failure
