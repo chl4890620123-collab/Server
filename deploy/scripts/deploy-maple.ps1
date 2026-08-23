@@ -155,7 +155,10 @@ if (-not $localReady) { throw "Maple local health check failed: $localHealth" }
 Write-Host "[maple] waiting for public preview URL"
 $publicUrl = $null
 for ($attempt = 1; $attempt -le 36; $attempt++) {
-    $logs = (docker logs maple-public-tunnel 2>&1 | Out-String)
+    # Cloudflared writes normal operational logs to stderr. Windows PowerShell
+    # 5.1 can promote native stderr into error records when ErrorAction=Stop,
+    # so collect both streams through cmd.exe before applying the URL regex.
+    $logs = (cmd.exe /d /s /c "docker logs maple-public-tunnel 2>&1" | Out-String)
     $matches = [regex]::Matches($logs, 'https://[a-z0-9-]+\.trycloudflare\.com')
     if ($matches.Count -gt 0) { $publicUrl = $matches[$matches.Count - 1].Value; break }
     Start-Sleep -Seconds 5
