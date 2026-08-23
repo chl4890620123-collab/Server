@@ -7,7 +7,6 @@ on:
     paths:
       - ".github/workflows/deploy-maple-ssh.yml"
       - "deploy/scripts/run-maple-deploy.ps1"
-      - "deploy/scripts/publish-maple-status.ps1"
 
 permissions:
   contents: write
@@ -62,15 +61,12 @@ jobs:
         if: steps.ssh.outputs.available == 'true' && steps.probe.outcome == 'success'
         continue-on-error: true
         uses: appleboy/ssh-action@v1.2.2
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           host: ${{ secrets.SERVER_HOST }}
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SERVER_SSH_KEY }}
           password: ${{ secrets.SERVER_PASSWORD }}
           port: ${{ secrets.SERVER_PORT || 22 }}
-          envs: GH_TOKEN
           timeout: 30s
           command_timeout: 25m
           capture_stdout: true
@@ -83,7 +79,6 @@ jobs:
         shell: bash
         env:
           DEPLOY_STDOUT: ${{ steps.deploy_maple.outputs.stdout }}
-          PROBE_STDOUT: ${{ steps.probe.outputs.stdout }}
         run: |
           set -euo pipefail
           available='${{ steps.ssh.outputs.available }}'
@@ -100,11 +95,30 @@ jobs:
           EOF
           printf '%s\n' "$DEPLOY_STDOUT" > deploy/status/ssh-output.txt
 
+          if [ "$deployment" = "success" ]; then
+            public_url="$(printf '%s\n' "$DEPLOY_STDOUT" | grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -n 1 || true)"
+            maple_sha="$(printf '%s\n' "$DEPLOY_STDOUT" | sed -n 's/^.*\[maple\] source SHA: \([0-9a-f]\{40\}\).*$/\1/p' | tail -n 1)"
+            if [ -z "$public_url" ]; then
+              echo 'Deployment succeeded but public URL was not captured.'
+              deployment=failure
+              sed -i 's/^deployment=.*/deployment=failure/' deploy/status/transport.txt
+            else
+              cat > deploy/status/maple.txt <<EOF
+          maple_sha=$maple_sha
+          public_url=$public_url
+          public_health=$public_url/api/health
+          EOF
+            fi
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add deploy/status/transport.txt deploy/status/ssh-output.txt
+          if [ -f deploy/status/maple.txt ]; then
+            git add deploy/status/maple.txt
+          fi
           if ! git diff --cached --quiet; then
-            git commit -m "chore: record Maple deployment transport"
+            git commit -m "chore: record Maple deployment result"
             git pull --rebase origin main
             git push origin HEAD:main
           fi
