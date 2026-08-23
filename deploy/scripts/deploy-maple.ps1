@@ -6,6 +6,9 @@ param(
     [string]$SourceSha,
 
     [Parameter(Mandatory = $false)]
+    [string]$DeploymentReason = "manual",
+
+    [Parameter(Mandatory = $false)]
     [string]$RegistryUser = "",
 
     [Parameter(Mandatory = $false)]
@@ -31,6 +34,7 @@ function New-MapleSecret {
 Write-Host "[maple] central deployment start"
 Write-Host "[maple] image: $MapleImage"
 Write-Host "[maple] source: $SourceSha"
+Write-Host "[maple] reason: $DeploymentReason"
 
 if (-not (Test-Path $ComposeFile)) {
     throw "Maple production compose file not found: $ComposeFile"
@@ -131,6 +135,28 @@ if ($portListener -and -not $existingMapleApp) {
     throw "Host port $appPort is already in use by another service."
 }
 
+if ($DeploymentReason -eq "schedule" -and (Test-Path $MarkerFile)) {
+    $deployedSha = (Get-Content $MarkerFile -Raw).Trim()
+    if ($deployedSha -eq $SourceSha) {
+        $dbHealth = docker inspect --format "{{.State.Health.Status}}" maple-db 2>$null
+        $dbHealthy = ($LASTEXITCODE -eq 0 -and $dbHealth.Trim() -eq "healthy")
+        $appHealthy = $false
+
+        try {
+            $currentResponse = Invoke-WebRequest -Uri "http://127.0.0.1:$appPort/api/health" -UseBasicParsing -TimeoutSec 5
+            $appHealthy = ($currentResponse.StatusCode -eq 200)
+        }
+        catch {
+            $appHealthy = $false
+        }
+
+        if ($dbHealthy -and $appHealthy) {
+            Write-Host "[maple] source $SourceSha is already deployed and healthy; scheduled run skipped."
+            exit 0
+        }
+    }
+}
+
 if ($RegistryUser -and $RegistryToken) {
     $RegistryToken | docker login ghcr.io -u $RegistryUser --password-stdin
     if ($LASTEXITCODE -ne 0) {
@@ -171,7 +197,7 @@ for ($attempt = 1; $attempt -le 24; $attempt++) {
         }
     }
     catch {
-        # Startup can take a little longer while MariaDB initializes for the first time.
+        # MariaDB initialization can make the first deployment take longer.
     }
 
     Start-Sleep -Seconds 5

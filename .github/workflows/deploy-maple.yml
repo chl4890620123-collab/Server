@@ -32,12 +32,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Checkout latest Maple source
-        uses: actions/checkout@v4
-        with:
-          repository: chl4890620123-collab/maple
-          ref: main
-          path: sources/maple
-          persist-credentials: false
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch main https://github.com/chl4890620123-collab/maple.git sources/maple
 
       - name: Resolve Maple image and source SHA
         id: maple
@@ -100,4 +98,4 @@ jobs:
           script: |
             if not exist C:\home\server mkdir C:\home\server
             if not exist C:\home\server\app git clone https://github.com/${{ github.repository }}.git C:\home\server\app
-            cd /d C:\home\server\app && git reset --hard HEAD && git clean -fd && git fetch --prune origin main && git checkout -B main origin/main && git reset --hard origin/main && git clean -fd && powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\home\server\app\deploy\scripts\deploy-maple.ps1 -MapleImage "${{ steps.maple.outputs.image }}:${{ steps.maple.outputs.sha }}" -SourceSha "${{ steps.maple.outputs.sha }}" -RegistryUser "${{ github.actor }}" -RegistryToken "${{ secrets.GITHUB_TOKEN }}"
+            cd /d C:\home\server\app && git reset --hard HEAD && git clean -fd && git fetch --prune origin main && git checkout -B main origin/main && git reset --hard origin/main && git clean -fd && powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\home\server\app\deploy\scripts\deploy-maple.ps1 -MapleImage "${{ steps.maple.outputs.image }}:${{ steps.maple.outputs.sha }}" -SourceSha "${{ steps.maple.outputs.sha }}" -DeploymentReason "${{ github.event_name }}" -RegistryUser "${{ github.actor }}" -RegistryToken "${{ secrets.GITHUB_TOKEN }}"
