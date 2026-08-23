@@ -1,6 +1,6 @@
 Warning: Permanently added '121.166.129.218' (ED25519) to the list of known hosts.
 #< CLIXML
-utc=2026-08-23T10:21:51.3474371Z
+utc=2026-08-23T10:22:42.6702617Z
 d_drive=True
 server_repo=True
 maple_source=True
@@ -10,8 +10,8 @@ docker_server=29.6.2
 === containers ===
 maple-public-tunnel|Created|
 maple-caddy|Created|
-maple-app|Up 18 seconds (health: starting)|
-maple-db|Up 34 seconds (healthy)|3306/tcp
+maple-app|Restarting (3) 1 second ago|
+maple-db|Up About a minute (healthy)|3306/tcp
 === images ===
 
 mariadb:11.4|455MB
