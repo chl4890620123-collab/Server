@@ -100,6 +100,10 @@ jobs:
         run: |
           set -euo pipefail
           docker run -d --name maple-central-ci-db \
+            --health-cmd="healthcheck.sh --connect --innodb_initialized" \
+            --health-interval=2s \
+            --health-timeout=3s \
+            --health-retries=30 \
             -e MARIADB_DATABASE=maple_craft \
             -e MARIADB_USER=maple_app \
             -e MARIADB_PASSWORD=maple_ci_password \
@@ -108,9 +112,13 @@ jobs:
             mariadb:11.4
 
           for attempt in $(seq 1 30); do
-            status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}starting{{end}}' maple-central-ci-db 2>/dev/null || true)"
+            status="$(docker inspect --format '{{.State.Health.Status}}' maple-central-ci-db 2>/dev/null || true)"
             if [ "$status" = "healthy" ]; then
               exit 0
+            fi
+            if [ "$status" = "unhealthy" ]; then
+              docker logs maple-central-ci-db
+              exit 1
             fi
             sleep 2
           done
