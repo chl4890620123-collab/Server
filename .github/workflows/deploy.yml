@@ -2,6 +2,14 @@ name: Infrastructure smoke test
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy.yml"
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "nginx/**"
+      - "public/**"
 
 concurrency:
   group: server-infra-smoke
@@ -22,10 +30,22 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
+
           docker version
-          if ($LASTEXITCODE -ne 0) { throw 'Docker Engine is not available.' }
+          if ($LASTEXITCODE -ne 0) { throw 'Docker Engine is not available. Start Docker Desktop.' }
+
           docker compose version
           if ($LASTEXITCODE -ne 0) { throw 'Docker Compose is not available.' }
+
+          $published = docker ps --filter "publish=$env:TEST_PORT" --format "{{.Names}}"
+          if ($published -and ($published -notcontains 'server-infra-smoke')) {
+            throw "TEST_PORT $env:TEST_PORT is already used by container: $($published -join ', '). Set Repository Variable TEST_PORT to another free port."
+          }
+
+          $listener = Get-NetTCPConnection -State Listen -LocalPort ([int]$env:TEST_PORT) -ErrorAction SilentlyContinue
+          if ($listener -and -not $published) {
+            throw "TEST_PORT $env:TEST_PORT is already used by a host process. Set Repository Variable TEST_PORT to another free port."
+          }
 
       - name: Start smoke frontend
         shell: powershell
@@ -54,9 +74,38 @@ jobs:
           }
 
           if (-not $healthy) {
-            docker compose ps
-            docker compose logs --tail 100
             throw "Smoke frontend health check failed: $url"
           }
 
           Write-Host "Smoke frontend is healthy: $url"
+
+      - name: Show access addresses
+        shell: powershell
+        run: |
+          Write-Host "Local : http://127.0.0.1:$env:TEST_PORT"
+          Write-Host "Health: http://127.0.0.1:$env:TEST_PORT/health"
+
+          $ips = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object {
+              $_.IPAddress -notlike '127.*' -and
+              $_.IPAddress -notlike '169.254*' -and
+              $_.InterfaceAlias -notmatch 'vEthernet|Loopback|Docker|WSL'
+            } |
+            Select-Object -ExpandProperty IPAddress -Unique
+
+          foreach ($ip in $ips) {
+            Write-Host "LAN   : http://${ip}:$env:TEST_PORT"
+          }
+
+          docker compose ps
+
+      - name: Diagnostics on failure
+        if: failure()
+        shell: powershell
+        run: |
+          Write-Host '=== docker ps -a ==='
+          docker ps -a
+          Write-Host '=== compose ps ==='
+          docker compose ps
+          Write-Host '=== compose logs ==='
+          docker compose logs --tail 200
