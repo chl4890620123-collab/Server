@@ -7,6 +7,9 @@ on:
     paths:
       - ".github/workflows/deploy-maple-ssh.yml"
       - "deploy/scripts/run-maple-deploy.ps1"
+      - "deploy/scripts/deploy-maple.ps1"
+      - "deploy/compose/maple.yml"
+      - "deploy/caddy/**"
 
 permissions:
   contents: write
@@ -40,62 +43,95 @@ jobs:
           fi
           echo "available=$available" >> "$GITHUB_OUTPUT"
 
-      - name: Probe mini PC SSH
-        id: probe
+      - name: Run Maple deployment with native SSH
+        id: deploy
         if: steps.ssh.outputs.available == 'true'
-        continue-on-error: true
-        uses: appleboy/ssh-action@v1.2.2
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          password: ${{ secrets.SERVER_PASSWORD }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          timeout: 30s
-          command_timeout: 1m
-          capture_stdout: true
-          script: powershell.exe -NoProfile -NonInteractive -Command "Write-Output 'maple-ssh-ok'"
-
-      - name: Deploy Maple through existing mini PC SSH
-        id: deploy_maple
-        if: steps.ssh.outputs.available == 'true' && steps.probe.outcome == 'success'
-        continue-on-error: true
-        uses: appleboy/ssh-action@v1.2.2
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          password: ${{ secrets.SERVER_PASSWORD }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          timeout: 30s
-          command_timeout: 25m
-          capture_stdout: true
-          script: |
-            powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $path='C:\home\server\app'; $parent=Split-Path $path -Parent; New-Item -ItemType Directory -Force -Path $parent | Out-Null; if (-not (Test-Path (Join-Path $path '.git'))) { if (Test-Path $path) { Remove-Item -Recurse -Force $path }; git clone 'https://github.com/chl4890620123-collab/Server.git' $path; if ($LASTEXITCODE -ne 0) { throw 'Server clone failed' } }; Set-Location $path; git reset --hard HEAD; if ($LASTEXITCODE -ne 0) { throw 'Server reset failed' }; git clean -fd; if ($LASTEXITCODE -ne 0) { throw 'Server clean failed' }; git fetch --prune origin main; if ($LASTEXITCODE -ne 0) { throw 'Server fetch failed' }; git checkout -B main origin/main; if ($LASTEXITCODE -ne 0) { throw 'Server checkout failed' }; git reset --hard origin/main; if ($LASTEXITCODE -ne 0) { throw 'Server main reset failed' }; git clean -fd; if ($LASTEXITCODE -ne 0) { throw 'Server final clean failed' }; & '.\deploy\scripts\run-maple-deploy.ps1'"
-
-      - name: Record SSH and deployment result
-        id: record
         shell: bash
         env:
-          DEPLOY_STDOUT: ${{ steps.deploy_maple.outputs.stdout }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
         run: |
           set -euo pipefail
-          available='${{ steps.ssh.outputs.available }}'
-          probe='${{ steps.probe.outcome }}'
-          action_outcome='${{ steps.deploy_maple.outcome }}'
-          [ -n "$probe" ] || probe=skipped
-          [ -n "$action_outcome" ] || action_outcome=skipped
-          final="$action_outcome"
+          mkdir -p deploy/status "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          port="${SERVER_PORT:-22}"
 
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/maple_deploy_key"
+            chmod 600 "$HOME/.ssh/maple_deploy_key"
+            auth=(ssh -i "$HOME/.ssh/maple_deploy_key")
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SERVER_PASSWORD"
+            auth=(sshpass -e ssh)
+          fi
+
+          cat > "$RUNNER_TEMP/maple-remote.ps1" <<'PWSH'
+          $ErrorActionPreference = 'Stop'
+          $path = 'C:\home\server\app'
+          $parent = Split-Path $path -Parent
+          New-Item -ItemType Directory -Force -Path $parent | Out-Null
+
+          if (-not (Test-Path (Join-Path $path '.git'))) {
+              if (Test-Path $path) {
+                  Remove-Item -Recurse -Force $path
+              }
+              git clone 'https://github.com/chl4890620123-collab/Server.git' $path
+              if ($LASTEXITCODE -ne 0) { throw 'Server clone failed' }
+          }
+
+          Set-Location $path
+          git reset --hard HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Server reset failed' }
+          git clean -fd
+          if ($LASTEXITCODE -ne 0) { throw 'Server clean failed' }
+          git fetch --prune origin main
+          if ($LASTEXITCODE -ne 0) { throw 'Server fetch failed' }
+          git checkout -B main origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Server checkout failed' }
+          git reset --hard origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Server main reset failed' }
+          git clean -fd
+          if ($LASTEXITCODE -ne 0) { throw 'Server final clean failed' }
+
+          & '.\deploy\scripts\run-maple-deploy.ps1'
+          PWSH
+
+          encoded="$(iconv -f UTF-8 -t UTF-16LE "$RUNNER_TEMP/maple-remote.ps1" | base64 -w0)"
+          remote_command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded"
+
+          set +e
+          output="$("${auth[@]}" -p "$port" -o BatchMode=no -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SERVER_USER@$SERVER_HOST" "$remote_command" 2>&1)"
+          code=$?
+          set -e
+
+          printf '%s\n' "$output" | tee deploy/status/ssh-output.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Record deployment result
+        id: record
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir -p deploy/status
-          printf '%s\n' "$DEPLOY_STDOUT" > deploy/status/ssh-output.txt
+          available='${{ steps.ssh.outputs.available }}'
+          exit_code='${{ steps.deploy.outputs.exit_code }}'
+          [ -n "$exit_code" ] || exit_code=999
+          final=failure
+          public_url=''
+          maple_sha=''
 
-          if [ "$action_outcome" = "success" ]; then
-            public_url="$(printf '%s\n' "$DEPLOY_STDOUT" | grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -n 1 || true)"
-            maple_sha="$(printf '%s\n' "$DEPLOY_STDOUT" | sed -n 's/^.*\[maple\] source SHA: \([0-9a-f]\{40\}\).*$/\1/p' | tail -n 1)"
-            if [ -z "$public_url" ]; then
-              final=failure
-            else
+          if [ "$available" != 'true' ]; then
+            final=skipped
+          elif [ "$exit_code" = '0' ]; then
+            public_url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' deploy/status/ssh-output.txt | tail -n 1 || true)"
+            maple_sha="$(sed -n 's/^.*\[maple\] source SHA: \([0-9a-f]\{40\}\).*$/\1/p' deploy/status/ssh-output.txt | tail -n 1)"
+            if [ -n "$public_url" ]; then
+              final=success
               cat > deploy/status/maple.txt <<EOF
           maple_sha=$maple_sha
           public_url=$public_url
@@ -106,17 +142,17 @@ jobs:
 
           cat > deploy/status/transport.txt <<EOF
           ssh_fallback_available=$available
-          ssh_connection=$probe
+          ssh_connection=$([ "$available" = 'true' ] && echo success || echo unavailable)
+          remote_exit_code=$exit_code
           deployment=$final
           EOF
           echo "final=$final" >> "$GITHUB_OUTPUT"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/status/transport.txt deploy/status/ssh-output.txt
-          if [ -f deploy/status/maple.txt ]; then
-            git add deploy/status/maple.txt
-          fi
+          git add deploy/status/transport.txt
+          if [ -f deploy/status/ssh-output.txt ]; then git add deploy/status/ssh-output.txt; fi
+          if [ -f deploy/status/maple.txt ]; then git add deploy/status/maple.txt; fi
           if ! git diff --cached --quiet; then
             git commit -m "chore: record Maple deployment result"
             git pull --rebase origin main
@@ -129,10 +165,6 @@ jobs:
           set -euo pipefail
           if [ '${{ steps.ssh.outputs.available }}' != 'true' ]; then
             echo 'Existing SSH configuration is unavailable; self-hosted runner remains the deployment path.'
-            exit 0
-          fi
-          if [ '${{ steps.probe.outcome }}' != 'success' ]; then
-            echo 'SSH connection probe failed.'
             exit 1
           fi
           if [ '${{ steps.record.outputs.final }}' != 'success' ]; then
