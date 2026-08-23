@@ -1,0 +1,13 @@
+services:
+  server:
+    image: ${SERVER_IMAGE:-server-local:latest}
+    container_name: server-web
+    restart: unless-stopped
+    ports:
+      - "${SERVER_HOST_PORT:-9010}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
