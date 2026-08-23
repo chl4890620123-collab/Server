@@ -35,10 +35,6 @@ function Get-ContainerLogsSafe([string]$Name, [int]$Tail = 80) {
 
 New-Item -ItemType Directory -Force -Path $StatusRoot | Out-Null
 
-# Docker Desktop's default config can use the Windows credential manager.
-# That credential helper is not available inside a non-interactive SSH logon.
-# Resolve the already-working Docker engine endpoint first, then use an
-# isolated credential-free config only for this deployment process.
 $currentContext = (docker context show 2>$null | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($currentContext)) {
     throw "Could not resolve the current Docker context."
@@ -53,8 +49,6 @@ New-Item -ItemType Directory -Force -Path $DockerRuntimeRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $DockerPluginRoot | Out-Null
 '{"auths":{}}' | Set-Content -Path (Join-Path $DockerRuntimeRoot "config.json") -Encoding ascii
 
-# Keep Docker Desktop CLI plugins (Compose/Buildx) available without copying
-# the user's credential store configuration.
 $pluginSources = @(
     (Join-Path $env:USERPROFILE ".docker\cli-plugins"),
     (Join-Path $env:ProgramFiles "Docker\Docker\resources\cli-plugins"),
@@ -75,6 +69,7 @@ if ($pluginCount -eq 0) {
 
 $env:DOCKER_CONFIG = $DockerRuntimeRoot
 $env:DOCKER_HOST = $dockerHost
+$env:BUILDKIT_NO_CLIENT_TOKEN = "true"
 Remove-Item Env:DOCKER_CONTEXT -ErrorAction SilentlyContinue
 
 Write-Host "[maple] using isolated Docker CLI config for SSH deployment"
@@ -89,8 +84,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "Docker Compose is not available through the isolated deployment config."
 }
 
-# Build the Cloudflared preview image locally. This avoids Docker Hub's
-# credential helper entirely while keeping the tunnel managed by Docker.
+Write-Host "[maple] prefetching Python 3.13 runtime image"
+docker pull python:3.13-slim
+if ($LASTEXITCODE -ne 0) {
+    throw "Could not pull python:3.13-slim with the isolated Docker config."
+}
+
 New-Item -ItemType Directory -Force -Path $TunnelBuildRoot | Out-Null
 $downloadCloudflared = $true
 if (Test-Path $CloudflaredBinary) {
