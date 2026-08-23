@@ -60,7 +60,7 @@ services:
         max-file: "3"
 
   maple-caddy:
-    image: caddy:2-alpine
+    image: caddy:2.10-alpine
     container_name: maple-caddy
     restart: unless-stopped
     depends_on:
@@ -73,21 +73,6 @@ services:
         source: ${MAPLE_CADDYFILE:?MAPLE_CADDYFILE is required}
         target: /etc/caddy/Caddyfile
         read_only: true
-    networks:
-      - maple-internal
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  maple-public-tunnel:
-    image: cloudflare/cloudflared:latest
-    container_name: maple-public-tunnel
-    restart: unless-stopped
-    depends_on:
-      - maple-caddy
-    command: tunnel --no-autoupdate --url http://maple-caddy:8080
     networks:
       - maple-internal
     logging:
