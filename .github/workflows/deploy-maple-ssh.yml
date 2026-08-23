@@ -54,7 +54,7 @@ jobs:
           port: ${{ secrets.SERVER_PORT || 22 }}
           timeout: 30s
           command_timeout: 1m
-          script_stop: true
+          capture_stdout: true
           script: echo maple-ssh-ok
 
       - name: Deploy Maple through existing mini PC SSH
@@ -73,7 +73,7 @@ jobs:
           envs: GH_TOKEN
           timeout: 30s
           command_timeout: 25m
-          script_stop: true
+          capture_stdout: true
           script: |
             if not exist C:\home\server mkdir C:\home\server
             if not exist C:\home\server\app git clone https://github.com/chl4890620123-collab/Server.git C:\home\server\app
@@ -81,6 +81,9 @@ jobs:
 
       - name: Record SSH and deployment result
         shell: bash
+        env:
+          DEPLOY_STDOUT: ${{ steps.deploy_maple.outputs.stdout }}
+          PROBE_STDOUT: ${{ steps.probe.outputs.stdout }}
         run: |
           set -euo pipefail
           available='${{ steps.ssh.outputs.available }}'
@@ -95,10 +98,11 @@ jobs:
           ssh_connection=$probe
           deployment=$deployment
           EOF
+          printf '%s\n' "$DEPLOY_STDOUT" > deploy/status/ssh-output.txt
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/status/transport.txt
+          git add deploy/status/transport.txt deploy/status/ssh-output.txt
           if ! git diff --cached --quiet; then
             git commit -m "chore: record Maple deployment transport"
             git pull --rebase origin main

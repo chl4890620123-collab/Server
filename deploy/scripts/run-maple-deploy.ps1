@@ -39,6 +39,9 @@ $caddyLogs
 $tunnelLogs
 "@ | Set-Content -Path $ErrorFile -Encoding utf8
 
+    Write-Host "=== MAPLE DEPLOYMENT FAILURE ==="
+    Get-Content $ErrorFile | ForEach-Object { Write-Host $_ }
+
     if ($env:GH_TOKEN) {
         try {
             & $PublishScript -RelativePath "deploy/status/maple-error.txt" -CommitMessage "chore: record Maple deployment failure"
