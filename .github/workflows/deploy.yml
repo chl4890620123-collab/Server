@@ -1,3 +1,4 @@
+# CI/CD verification trigger
 name: Build and deploy Server
 
 on:
