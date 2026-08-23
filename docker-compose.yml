@@ -1,16 +1,15 @@
 services:
-  server:
-    image: ${SERVER_IMAGE:-server-local:latest}
+  smoke-web:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: server-web
+    container_name: server-infra-smoke
     restart: unless-stopped
     ports:
-      - "${SERVER_HOST_PORT:-9010}:80"
+      - "${TEST_PORT:-9010}:80"
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 5s
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 3s

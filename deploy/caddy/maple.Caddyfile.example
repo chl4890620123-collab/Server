@@ -1,8 +1,0 @@
-# Maple public-route template.
-# Do NOT run this as a second Caddy instance on ports 80/443.
-# Add/import the block into the existing public Caddy only after the real DNS name is chosen.
-
-maple.example.com {
-    encode zstd gzip
-    reverse_proxy host.docker.internal:9040
-}
