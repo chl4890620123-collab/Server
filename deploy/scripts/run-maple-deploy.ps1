@@ -22,6 +22,18 @@ function Get-ContainerLogsSafe([string]$Name, [int]$Tail = 80) {
     finally { $ErrorActionPreference = $old }
 }
 
+function Get-ContainerInspectSafe([string]$Name) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    try {
+        $exists = (docker ps -a --filter "name=^/$Name$" --format "{{.Names}}" 2>$null | Out-String).Trim()
+        if ($exists -ne $Name) { return "<container not created: $Name>" }
+        $state = (docker inspect --format "state={{json .State}}`ncmd={{json .Config.Cmd}}`nentrypoint={{json .Config.Entrypoint}}" $Name 2>&1 | Out-String)
+        return $state
+    } catch { return "<failed to inspect: $Name>" }
+    finally { $ErrorActionPreference = $old }
+}
+
 New-Item -ItemType Directory -Force -Path $StatusRoot | Out-Null
 
 $currentContext = (docker context show 2>$null | Out-String).Trim()
@@ -87,8 +99,6 @@ if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary).Length
 }
 $env:MAPLE_CLOUDFLARED_BINARY = ($CloudflaredBinary -replace "\\", "/")
 
-# Keep MariaDB intact, but always recreate application-facing containers so
-# a new Maple source revision and a fresh health state are applied immediately.
 foreach ($name in @("maple-public-tunnel", "maple-caddy", "maple-app")) {
     $exists = (docker ps -a --filter "name=^/$name$" --format "{{.Names}}" 2>$null | Out-String).Trim()
     if ($exists -eq $name) {
@@ -107,14 +117,17 @@ catch {
     Write-Host "=== MAPLE DEPLOYMENT FAILURE ==="
     Write-Host "message=$message"
 
+    Start-Sleep -Seconds 3
+
     $old = $ErrorActionPreference
     $ErrorActionPreference = "SilentlyContinue"
     try { $dockerPs = (docker ps -a 2>&1 | Out-String) }
     catch { $dockerPs = "<failed to run docker ps>" }
     finally { $ErrorActionPreference = $old }
 
+    $appInspect = Get-ContainerInspectSafe "maple-app"
     $dbLogs = Get-ContainerLogsSafe "maple-db" 80
-    $appLogs = Get-ContainerLogsSafe "maple-app" 120
+    $appLogs = Get-ContainerLogsSafe "maple-app" 160
     $caddyLogs = Get-ContainerLogsSafe "maple-caddy" 80
     $tunnelLogs = Get-ContainerLogsSafe "maple-public-tunnel" 120
 
@@ -124,6 +137,8 @@ message=$message
 
 === docker ps -a ===
 $dockerPs
+=== maple-app inspect ===
+$appInspect
 === maple-db ===
 $dbLogs
 === maple-app ===
