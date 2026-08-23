@@ -1,6 +1,6 @@
-run_id=32634084444
+run_id=32640825817
 run_attempt=1
 ssh_fallback_available=true
-ssh_connection=success
-remote_exit_code=0
-deployment=success
+ssh_connection=pending
+remote_exit_code=pending
+deployment=running
