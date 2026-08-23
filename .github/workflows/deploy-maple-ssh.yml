@@ -41,24 +41,26 @@ jobs:
           fi
           echo "available=$available" >> "$GITHUB_OUTPUT"
 
-      - name: Record SSH fallback availability
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p deploy/status
-          printf 'ssh_fallback_available=%s\n' '${{ steps.ssh.outputs.available }}' > deploy/status/transport.txt
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/status/transport.txt
-          if git diff --cached --quiet; then
-            exit 0
-          fi
-          git commit -m "chore: record Maple deployment transport"
-          git pull --rebase origin main
-          git push origin HEAD:main
+      - name: Probe mini PC SSH
+        id: probe
+        if: steps.ssh.outputs.available == 'true'
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          timeout: 30s
+          command_timeout: 1m
+          script_stop: true
+          script: echo maple-ssh-ok
 
       - name: Deploy Maple through existing mini PC SSH
-        if: steps.ssh.outputs.available == 'true'
+        id: deploy_maple
+        if: steps.ssh.outputs.available == 'true' && steps.probe.outcome == 'success'
+        continue-on-error: true
         uses: appleboy/ssh-action@v1.2.2
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -69,6 +71,7 @@ jobs:
           password: ${{ secrets.SERVER_PASSWORD }}
           port: ${{ secrets.SERVER_PORT || 22 }}
           envs: GH_TOKEN
+          timeout: 30s
           command_timeout: 25m
           script_stop: true
           script: |
@@ -76,7 +79,45 @@ jobs:
             if not exist C:\home\server\app git clone https://github.com/chl4890620123-collab/Server.git C:\home\server\app
             cd /d C:\home\server\app && git reset --hard HEAD && git clean -fd && git fetch --prune origin main && git checkout -B main origin/main && git reset --hard origin/main && git clean -fd && powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\home\server\app\deploy\scripts\run-maple-deploy.ps1
 
-      - name: Explain unavailable fallback
-        if: steps.ssh.outputs.available != 'true'
+      - name: Record SSH and deployment result
         shell: bash
-        run: echo "Existing Server SSH secrets are not configured; self-hosted runner remains the deployment path."
+        run: |
+          set -euo pipefail
+          available='${{ steps.ssh.outputs.available }}'
+          probe='${{ steps.probe.outcome }}'
+          deployment='${{ steps.deploy_maple.outcome }}'
+          [ -n "$probe" ] || probe=skipped
+          [ -n "$deployment" ] || deployment=skipped
+
+          mkdir -p deploy/status
+          cat > deploy/status/transport.txt <<EOF
+          ssh_fallback_available=$available
+          ssh_connection=$probe
+          deployment=$deployment
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/status/transport.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: record Maple deployment transport"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
+      - name: Enforce deployment result
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ '${{ steps.ssh.outputs.available }}' != 'true' ]; then
+            echo 'Existing SSH configuration is unavailable; self-hosted runner remains the deployment path.'
+            exit 0
+          fi
+          if [ '${{ steps.probe.outcome }}' != 'success' ]; then
+            echo 'SSH connection probe failed.'
+            exit 1
+          fi
+          if [ '${{ steps.deploy_maple.outcome }}' != 'success' ]; then
+            echo 'Maple remote deployment failed.'
+            exit 1
+          fi
