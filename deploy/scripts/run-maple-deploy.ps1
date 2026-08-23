@@ -4,33 +4,22 @@ $ServerRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $StatusRoot = Join-Path $ServerRoot "deploy\status"
 $ErrorFile = Join-Path $StatusRoot "maple-error.txt"
 $DeployScript = Join-Path $ServerRoot "deploy\scripts\deploy-maple.ps1"
-$PublishScript = Join-Path $ServerRoot "deploy\scripts\publish-maple-status.ps1"
 $DockerRuntimeRoot = "D:\server-data\maple\runtime\docker-cli"
 $DockerPluginRoot = Join-Path $DockerRuntimeRoot "cli-plugins"
-$TunnelBuildRoot = "D:\server-data\maple\runtime\cloudflared-image"
-$CloudflaredBinary = Join-Path $TunnelBuildRoot "cloudflared"
-$TunnelDockerfile = Join-Path $TunnelBuildRoot "Dockerfile"
+$TunnelRuntimeRoot = "D:\server-data\maple\runtime\cloudflared"
+$CloudflaredBinary = Join-Path $TunnelRuntimeRoot "cloudflared"
 
 function Get-ContainerLogsSafe([string]$Name, [int]$Tail = 80) {
-    $oldPreference = $ErrorActionPreference
+    $old = $ErrorActionPreference
     $ErrorActionPreference = "SilentlyContinue"
     try {
         $exists = (docker ps -a --filter "name=^/$Name$" --format "{{.Names}}" 2>$null | Out-String).Trim()
-        if ($LASTEXITCODE -ne 0 -or $exists -ne $Name) {
-            return "<container not created: $Name>"
-        }
+        if ($exists -ne $Name) { return "<container not created: $Name>" }
         $text = (docker logs --tail $Tail $Name 2>&1 | Out-String)
-        if ([string]::IsNullOrWhiteSpace($text)) {
-            return "<no logs: $Name>"
-        }
+        if ([string]::IsNullOrWhiteSpace($text)) { return "<no logs: $Name>" }
         return $text
-    }
-    catch {
-        return "<failed to read logs: $Name>"
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
+    } catch { return "<failed to read logs: $Name>" }
+    finally { $ErrorActionPreference = $old }
 }
 
 New-Item -ItemType Directory -Force -Path $StatusRoot | Out-Null
@@ -39,10 +28,9 @@ $currentContext = (docker context show 2>$null | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($currentContext)) {
     throw "Could not resolve the current Docker context."
 }
-
 $dockerHost = (docker context inspect $currentContext --format "{{.Endpoints.docker.Host}}" 2>$null | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($dockerHost)) {
-    throw "Could not resolve the Docker engine endpoint for context '$currentContext'."
+    throw "Could not resolve the Docker engine endpoint."
 }
 
 New-Item -ItemType Directory -Force -Path $DockerRuntimeRoot | Out-Null
@@ -55,103 +43,70 @@ $pluginSources = @(
     (Join-Path $env:ProgramFiles "Docker\cli-plugins")
 )
 $pluginCount = 0
-foreach ($pluginSource in $pluginSources) {
-    if (Test-Path $pluginSource) {
-        Get-ChildItem $pluginSource -Filter "docker-*.exe" -File -ErrorAction SilentlyContinue | ForEach-Object {
+foreach ($source in $pluginSources) {
+    if (Test-Path $source) {
+        Get-ChildItem $source -Filter "docker-*.exe" -File -ErrorAction SilentlyContinue | ForEach-Object {
             Copy-Item $_.FullName (Join-Path $DockerPluginRoot $_.Name) -Force
             $pluginCount++
         }
     }
 }
-if ($pluginCount -eq 0) {
-    throw "Docker CLI plugins could not be found on the mini PC."
-}
+if ($pluginCount -eq 0) { throw "Docker CLI plugins could not be found." }
 
 $env:DOCKER_CONFIG = $DockerRuntimeRoot
 $env:DOCKER_HOST = $dockerHost
-$env:BUILDKIT_NO_CLIENT_TOKEN = "true"
 Remove-Item Env:DOCKER_CONTEXT -ErrorAction SilentlyContinue
 
-Write-Host "[maple] using isolated Docker CLI config for SSH deployment"
-Write-Host "[maple] copied Docker CLI plugins: $pluginCount"
-
+Write-Host "[maple] using credential-free Docker CLI config"
+Write-Host "[maple] Docker CLI plugins: $pluginCount"
 docker version *> $null
-if ($LASTEXITCODE -ne 0) {
-    throw "Docker engine is not reachable through the isolated deployment config."
-}
+if ($LASTEXITCODE -ne 0) { throw "Docker engine is not reachable." }
 docker compose version *> $null
-if ($LASTEXITCODE -ne 0) {
-    throw "Docker Compose is not available through the isolated deployment config."
-}
+if ($LASTEXITCODE -ne 0) { throw "Docker Compose is not available." }
 
-Write-Host "[maple] prefetching Python 3.13 runtime image"
-docker pull python:3.13-slim
-if ($LASTEXITCODE -ne 0) {
-    throw "Could not pull python:3.13-slim with the isolated Docker config."
-}
-
-New-Item -ItemType Directory -Force -Path $TunnelBuildRoot | Out-Null
-$downloadCloudflared = $true
+# All runtime container images are already present on the mini PC. The only
+# external binary needed for public preview is downloaded directly from the
+# official Cloudflare GitHub release, not from a container registry.
+New-Item -ItemType Directory -Force -Path $TunnelRuntimeRoot | Out-Null
+$download = $true
 if (Test-Path $CloudflaredBinary) {
-    $existingBinary = Get-Item $CloudflaredBinary -ErrorAction SilentlyContinue
-    if ($existingBinary -and $existingBinary.Length -gt 1MB) {
-        $downloadCloudflared = $false
-    }
+    $file = Get-Item $CloudflaredBinary -ErrorAction SilentlyContinue
+    if ($file -and $file.Length -gt 1MB) { $download = $false }
 }
-
-if ($downloadCloudflared) {
-    $cloudflaredUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
-    Write-Host "[maple] downloading Cloudflared Linux binary from GitHub Releases"
+if ($download) {
+    Write-Host "[maple] downloading Cloudflared from GitHub Releases"
+    $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
     $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
     if ($curl) {
-        & $curl.Source -fL --retry 3 --connect-timeout 20 --output $CloudflaredBinary $cloudflaredUrl
-        if ($LASTEXITCODE -ne 0) {
-            throw "Cloudflared binary download failed."
-        }
+        & $curl.Source -fL --retry 3 --connect-timeout 20 --output $CloudflaredBinary $url
+        if ($LASTEXITCODE -ne 0) { throw "Cloudflared binary download failed." }
     } else {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -UseBasicParsing -Uri $cloudflaredUrl -OutFile $CloudflaredBinary -TimeoutSec 120
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $CloudflaredBinary -TimeoutSec 120
     }
 }
-
 if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary).Length -le 1MB) {
-    throw "Cloudflared binary is missing or invalid after download."
+    throw "Cloudflared binary is missing or invalid."
 }
-
-@"
-FROM caddy:2.10-alpine
-COPY --chmod=0755 cloudflared /usr/local/bin/cloudflared
-ENTRYPOINT ["/usr/local/bin/cloudflared"]
-"@ | Set-Content -Path $TunnelDockerfile -Encoding ascii
-$env:MAPLE_TUNNEL_DIR = ($TunnelBuildRoot -replace "\\", "/")
+$env:MAPLE_CLOUDFLARED_BINARY = ($CloudflaredBinary -replace "\\", "/")
 
 try {
     & $DeployScript
-    if ($env:GH_TOKEN) {
-        & $PublishScript -RelativePath "deploy/status/maple.txt" -CommitMessage "chore: record deployed Maple URL"
-    }
 }
 catch {
     $failedAt = (Get-Date).ToUniversalTime().ToString("o")
     $message = $_.Exception.Message
-
     Write-Host "=== MAPLE DEPLOYMENT FAILURE ==="
     Write-Host "message=$message"
 
-    $oldPreference = $ErrorActionPreference
+    $old = $ErrorActionPreference
     $ErrorActionPreference = "SilentlyContinue"
-    try {
-        $dockerPs = (docker ps -a 2>&1 | Out-String)
-    }
-    catch {
-        $dockerPs = "<failed to run docker ps>"
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
+    try { $dockerPs = (docker ps -a 2>&1 | Out-String) }
+    catch { $dockerPs = "<failed to run docker ps>" }
+    finally { $ErrorActionPreference = $old }
 
     $dbLogs = Get-ContainerLogsSafe "maple-db" 80
-    $appLogs = Get-ContainerLogsSafe "maple-app" 80
+    $appLogs = Get-ContainerLogsSafe "maple-app" 120
     $caddyLogs = Get-ContainerLogsSafe "maple-caddy" 80
     $tunnelLogs = Get-ContainerLogsSafe "maple-public-tunnel" 120
 
@@ -170,17 +125,6 @@ $caddyLogs
 === maple-public-tunnel ===
 $tunnelLogs
 "@ | Set-Content -Path $ErrorFile -Encoding utf8
-
     Get-Content $ErrorFile | ForEach-Object { Write-Host $_ }
-
-    if ($env:GH_TOKEN) {
-        try {
-            & $PublishScript -RelativePath "deploy/status/maple-error.txt" -CommitMessage "chore: record Maple deployment failure"
-        }
-        catch {
-            Write-Warning "Could not publish Maple failure diagnostics to GitHub."
-        }
-    }
-
     throw
 }
