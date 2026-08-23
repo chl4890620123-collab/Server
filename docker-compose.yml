@@ -1,6 +1,9 @@
 services:
   server:
     image: ${SERVER_IMAGE:-server-local:latest}
+    build:
+      context: .
+      dockerfile: Dockerfile
     container_name: server-web
     restart: unless-stopped
     ports:
