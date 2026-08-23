@@ -64,9 +64,6 @@ if ($LASTEXITCODE -ne 0) { throw "Docker engine is not reachable." }
 docker compose version *> $null
 if ($LASTEXITCODE -ne 0) { throw "Docker Compose is not available." }
 
-# All runtime container images are already present on the mini PC. The only
-# external binary needed for public preview is downloaded directly from the
-# official Cloudflare GitHub release, not from a container registry.
 New-Item -ItemType Directory -Force -Path $TunnelRuntimeRoot | Out-Null
 $download = $true
 if (Test-Path $CloudflaredBinary) {
@@ -89,6 +86,17 @@ if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary).Length
     throw "Cloudflared binary is missing or invalid."
 }
 $env:MAPLE_CLOUDFLARED_BINARY = ($CloudflaredBinary -replace "\\", "/")
+
+# Keep MariaDB intact, but always recreate application-facing containers so
+# a new Maple source revision and a fresh health state are applied immediately.
+foreach ($name in @("maple-public-tunnel", "maple-caddy", "maple-app")) {
+    $exists = (docker ps -a --filter "name=^/$name$" --format "{{.Names}}" 2>$null | Out-String).Trim()
+    if ($exists -eq $name) {
+        Write-Host "[maple] recreating $name"
+        docker rm -f $name *> $null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to remove stale container: $name" }
+    }
+}
 
 try {
     & $DeployScript
