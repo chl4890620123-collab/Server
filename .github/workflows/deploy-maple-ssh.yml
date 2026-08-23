@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/deploy-maple-ssh.yml"
+      - "deploy/scripts/run-maple-deploy.ps1"
       - "deploy/scripts/publish-maple-status.ps1"
 
 permissions:
@@ -73,7 +74,7 @@ jobs:
           script: |
             if not exist C:\home\server mkdir C:\home\server
             if not exist C:\home\server\app git clone https://github.com/chl4890620123-collab/Server.git C:\home\server\app
-            cd /d C:\home\server\app && git reset --hard HEAD && git clean -fd && git fetch --prune origin main && git checkout -B main origin/main && git reset --hard origin/main && git clean -fd && powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\home\server\app\deploy\scripts\deploy-maple.ps1 && powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\home\server\app\deploy\scripts\publish-maple-status.ps1
+            cd /d C:\home\server\app && git reset --hard HEAD && git clean -fd && git fetch --prune origin main && git checkout -B main origin/main && git reset --hard origin/main && git clean -fd && powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\home\server\app\deploy\scripts\run-maple-deploy.ps1
 
       - name: Explain unavailable fallback
         if: steps.ssh.outputs.available != 'true'

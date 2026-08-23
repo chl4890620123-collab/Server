@@ -1,3 +1,8 @@
+param(
+    [string]$RelativePath = "deploy/status/maple.txt",
+    [string]$CommitMessage = "chore: record Maple deployment status"
+)
+
 $ErrorActionPreference = "Stop"
 
 if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
@@ -5,14 +10,14 @@ if ([string]::IsNullOrWhiteSpace($env:GH_TOKEN)) {
 }
 
 $ServerRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
-$StatusFile = Join-Path $ServerRoot "deploy\status\maple.txt"
-if (-not (Test-Path $StatusFile)) {
-    throw "Maple deployment status file is missing: $StatusFile"
+$LocalPath = Join-Path $ServerRoot ($RelativePath -replace "/", "\")
+if (-not (Test-Path $LocalPath)) {
+    throw "Deployment status file is missing: $LocalPath"
 }
 
-$statusText = Get-Content $StatusFile -Raw
+$statusText = Get-Content $LocalPath -Raw
 $content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($statusText))
-$uri = "https://api.github.com/repos/chl4890620123-collab/Server/contents/deploy/status/maple.txt"
+$uri = "https://api.github.com/repos/chl4890620123-collab/Server/contents/$RelativePath"
 $headers = @{
     Authorization = "Bearer $env:GH_TOKEN"
     Accept = "application/vnd.github+json"
@@ -21,7 +26,7 @@ $headers = @{
 }
 
 $body = @{
-    message = "chore: record deployed Maple URL"
+    message = $CommitMessage
     content = $content
     branch = "main"
 }
@@ -44,4 +49,4 @@ catch {
 
 $json = $body | ConvertTo-Json -Depth 4
 Invoke-RestMethod -Method Put -Uri $uri -Headers $headers -ContentType "application/json" -Body $json -TimeoutSec 30 | Out-Null
-Write-Host "[maple] published deployment status to GitHub"
+Write-Host "[maple] published $RelativePath to GitHub"
