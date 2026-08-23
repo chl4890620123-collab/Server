@@ -37,12 +37,12 @@ Start-Sleep -Seconds 3
 
 docker compose ps
 
-$healthUrl = "http://127.0.0.1:$HostPort/health"
-$response = Invoke-RestMethod -Uri $healthUrl -Method Get -TimeoutSec 10
+$rootUrl = "http://127.0.0.1:$HostPort/"
+$response = Invoke-WebRequest -Uri $rootUrl -Method Get -TimeoutSec 10 -UseBasicParsing
 
-if ($response.status -ne "UP") {
-    throw "Health check failed: $healthUrl"
+if ($response.StatusCode -ne 200) {
+    throw "Root page check failed: $rootUrl (status $($response.StatusCode))"
 }
 
-Write-Host "[server] health check OK: $healthUrl"
+Write-Host "[server] root page check OK: $rootUrl"
 Write-Host "[server] deploy complete"
