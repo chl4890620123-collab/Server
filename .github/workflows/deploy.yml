@@ -9,7 +9,7 @@ concurrency:
 
 jobs:
   smoke-deploy:
-    runs-on: [self-hosted, windows, x64]
+    runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 10
     env:
       TEST_PORT: ${{ vars.TEST_PORT || '9010' }}
