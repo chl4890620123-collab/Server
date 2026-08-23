@@ -30,13 +30,13 @@ GitHub Actions
 - MariaDB
 - Caddy / 도메인 연결
 - 자동 스케줄 배포
-- prune / cleanup 자동화
+- 전역 Docker prune/cleanup
 
 첫 연결을 단순하게 검증하기 위해 모두 제거했습니다.
 
 ## 1단계: Self-hosted Runner 등록
 
-미니PC에서 GitHub 저장소의 다음 메뉴로 이동합니다.
+GitHub에서 다음 메뉴로 이동합니다.
 
 ```text
 Server
@@ -49,9 +49,11 @@ Server
 
 GitHub가 화면에 보여주는 등록 명령을 **미니PC PowerShell에서 그대로 한 번 실행**합니다.
 
-Runner가 `Idle` 상태가 되면 준비 완료입니다.
+첫 smoke test에서는 Windows 서비스로 등록하지 말고, 로그인된 사용자 세션에서 `run.cmd`를 직접 실행하는 방식을 권장합니다. Docker Desktop이 사용자 세션에서 실행되는 환경에서는 이 방식이 가장 단순합니다.
 
-Docker Desktop은 실행 중이어야 합니다.
+Runner 화면에 `Listening for Jobs`가 보이고 GitHub에서 상태가 `Idle`이면 준비 완료입니다.
+
+Docker Desktop도 실행 중이어야 합니다.
 
 ## 2단계: 테스트 배포 실행
 
@@ -66,9 +68,7 @@ Server
 
 workflow는 미니PC 자체에서 실행됩니다. 외부에서 22번 SSH로 들어오지 않습니다.
 
-기본 테스트 포트는 `9010`입니다.
-
-필요하면 Repository Variable `TEST_PORT`만 다른 빈 포트로 지정하면 됩니다.
+기본 테스트 포트는 `9010`입니다. 필요하면 Repository Variable `TEST_PORT`만 다른 빈 포트로 지정하면 됩니다.
 
 ## 3단계: 성공 확인
 
