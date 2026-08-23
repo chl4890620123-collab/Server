@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/probe-maple-runtime.yml"
+      - "deploy/status/probe-trigger.txt"
 
 permissions:
   contents: write
