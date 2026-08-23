@@ -40,6 +40,14 @@ function Read-EnvFile([string]$Path) {
     return $map
 }
 
+function Add-EnvSetting([string]$Path, [hashtable]$Map, [string]$Key, [string]$Value) {
+    if (-not $Map.ContainsKey($Key) -or [string]::IsNullOrWhiteSpace($Map[$Key])) {
+        Add-Content -Path $Path -Value "$Key=$Value" -Encoding ascii
+        $Map[$Key] = $Value
+        Write-Host "[maple] added missing runtime setting: $Key"
+    }
+}
+
 Write-Host "[maple] checking mini PC runtime"
 
 docker version *> $null
@@ -70,31 +78,6 @@ New-Item -ItemType Directory -Force -Path $BackupRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $StatusRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path $MapleSourceRoot -Parent) | Out-Null
 
-if (-not (Test-Path (Join-Path $MapleSourceRoot ".git"))) {
-    if (Test-Path $MapleSourceRoot) {
-        Remove-Item -Recurse -Force $MapleSourceRoot
-    }
-    git clone https://github.com/chl4890620123-collab/maple.git $MapleSourceRoot
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to clone Maple repository."
-    }
-}
-
-Write-Host "[maple] updating application source"
-git -C $MapleSourceRoot fetch --prune origin main
-if ($LASTEXITCODE -ne 0) { throw "Failed to fetch Maple main." }
-git -C $MapleSourceRoot checkout -B main origin/main
-if ($LASTEXITCODE -ne 0) { throw "Failed to checkout Maple main." }
-git -C $MapleSourceRoot reset --hard origin/main
-if ($LASTEXITCODE -ne 0) { throw "Failed to reset Maple source." }
-git -C $MapleSourceRoot clean -fd
-if ($LASTEXITCODE -ne 0) { throw "Failed to clean Maple source." }
-
-$MapleSha = (git -C $MapleSourceRoot rev-parse HEAD).Trim()
-if (-not $MapleSha) {
-    throw "Could not resolve Maple source SHA."
-}
-
 if (-not (Test-Path $RuntimeEnv)) {
     $adminToken = New-SecretValue
     $dbPassword = New-SecretValue
@@ -115,11 +98,31 @@ DB_ROOT_PASSWORD=$dbRootPassword
 }
 
 $envMap = Read-EnvFile $RuntimeEnv
+$dbHasExistingData = $null -ne (Get-ChildItem $DbDataRoot -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
 
-if (-not $envMap.ContainsKey("MAPLE_LOCAL_PORT")) {
-    $legacyPort = if ($envMap.ContainsKey("APP_PORT")) { $envMap["APP_PORT"] } else { "9040" }
-    Add-Content -Path $RuntimeEnv -Value "MAPLE_LOCAL_PORT=$legacyPort" -Encoding ascii
-    $envMap["MAPLE_LOCAL_PORT"] = $legacyPort
+if (-not $envMap.ContainsKey("MAPLE_LOCAL_PORT") -or [string]::IsNullOrWhiteSpace($envMap["MAPLE_LOCAL_PORT"])) {
+    $legacyPort = if ($envMap.ContainsKey("APP_PORT") -and -not [string]::IsNullOrWhiteSpace($envMap["APP_PORT"])) {
+        $envMap["APP_PORT"]
+    } else {
+        "9040"
+    }
+    Add-EnvSetting $RuntimeEnv $envMap "MAPLE_LOCAL_PORT" $legacyPort
+}
+
+Add-EnvSetting $RuntimeEnv $envMap "DEFAULT_FEE_RATE" "0.05"
+Add-EnvSetting $RuntimeEnv $envMap "DB_NAME" "maple_craft"
+Add-EnvSetting $RuntimeEnv $envMap "DB_USER" "maple_app"
+
+$missingDbPassword = -not $envMap.ContainsKey("DB_PASSWORD") -or [string]::IsNullOrWhiteSpace($envMap["DB_PASSWORD"])
+$missingRootPassword = -not $envMap.ContainsKey("DB_ROOT_PASSWORD") -or [string]::IsNullOrWhiteSpace($envMap["DB_ROOT_PASSWORD"])
+if (($missingDbPassword -or $missingRootPassword) -and $dbHasExistingData) {
+    throw "MariaDB data already exists but its password settings are missing. Existing DB data was left untouched."
+}
+if ($missingDbPassword) {
+    Add-EnvSetting $RuntimeEnv $envMap "DB_PASSWORD" (New-SecretValue)
+}
+if ($missingRootPassword) {
+    Add-EnvSetting $RuntimeEnv $envMap "DB_ROOT_PASSWORD" (New-SecretValue)
 }
 
 $requiredKeys = @(
@@ -151,6 +154,31 @@ if ($listener -and -not $existingCaddy) {
     throw "Maple local port $localPort is already used by another service."
 }
 
+if (-not (Test-Path (Join-Path $MapleSourceRoot ".git"))) {
+    if (Test-Path $MapleSourceRoot) {
+        Remove-Item -Recurse -Force $MapleSourceRoot
+    }
+    git clone https://github.com/chl4890620123-collab/maple.git $MapleSourceRoot
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to clone Maple repository."
+    }
+}
+
+Write-Host "[maple] updating application source"
+git -C $MapleSourceRoot fetch --prune origin main
+if ($LASTEXITCODE -ne 0) { throw "Failed to fetch Maple main." }
+git -C $MapleSourceRoot checkout -B main origin/main
+if ($LASTEXITCODE -ne 0) { throw "Failed to checkout Maple main." }
+git -C $MapleSourceRoot reset --hard origin/main
+if ($LASTEXITCODE -ne 0) { throw "Failed to reset Maple source." }
+git -C $MapleSourceRoot clean -fd
+if ($LASTEXITCODE -ne 0) { throw "Failed to clean Maple source." }
+
+$MapleSha = (git -C $MapleSourceRoot rev-parse HEAD).Trim()
+if (-not $MapleSha) {
+    throw "Could not resolve Maple source SHA."
+}
+
 $existingDb = docker ps --format "{{.Names}}" | Where-Object { $_ -eq "maple-db" }
 if ($existingDb) {
     Write-Host "[maple] creating pre-deploy MariaDB backup"
@@ -162,8 +190,7 @@ if ($existingDb) {
             docker exec maple-db rm -f /tmp/maple_backup.sql | Out-Null
         }
     } else {
-        Write-Warning "MariaDB backup failed; deployment will stop to protect existing data."
-        throw "Pre-deploy MariaDB backup failed."
+        throw "Pre-deploy MariaDB backup failed. Existing data was left untouched."
     }
 }
 
@@ -203,9 +230,9 @@ for ($attempt = 1; $attempt -le 36; $attempt++) {
 
 if (-not $localReady) {
     docker compose --env-file $RuntimeEnv -p maple-production -f $ComposeFile ps
-    docker logs --tail 120 maple-db
-    docker logs --tail 120 maple-app
-    docker logs --tail 120 maple-caddy
+    docker logs --tail 120 maple-db 2>$null
+    docker logs --tail 120 maple-app 2>$null
+    docker logs --tail 120 maple-caddy 2>$null
     throw "Maple local health check failed: $localHealth"
 }
 
@@ -222,7 +249,7 @@ for ($attempt = 1; $attempt -le 36; $attempt++) {
 }
 
 if (-not $publicUrl) {
-    docker logs --tail 160 maple-public-tunnel
+    docker logs --tail 160 maple-public-tunnel 2>$null
     throw "Cloudflare Quick Tunnel did not provide a public URL."
 }
 
