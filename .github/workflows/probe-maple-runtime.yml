@@ -1,0 +1,81 @@
+name: Probe Maple runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/probe-maple-runtime.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Probe Windows mini PC
+        id: probe
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/status "$HOME/.ssh"
+          port="${SERVER_PORT:-22}"
+
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/maple_probe_key"
+            chmod 600 "$HOME/.ssh/maple_probe_key"
+            auth=(ssh -i "$HOME/.ssh/maple_probe_key")
+          else
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SERVER_PASSWORD"
+            auth=(sshpass -e ssh)
+          fi
+
+          cat > "$RUNNER_TEMP/probe.ps1" <<'PWSH'
+          $ErrorActionPreference = 'Continue'
+          Write-Output ('utc=' + (Get-Date).ToUniversalTime().ToString('o'))
+          Write-Output ('d_drive=' + (Test-Path 'D:\'))
+          Write-Output ('server_repo=' + (Test-Path 'C:\home\server\app\.git'))
+          Write-Output ('maple_source=' + (Test-Path 'C:\home\server\sources\maple\.git'))
+          Write-Output ('runtime_env=' + (Test-Path 'D:\server-data\maple\runtime\.env'))
+          Write-Output ('docker_cli=' + [bool](Get-Command docker -ErrorAction SilentlyContinue))
+          docker version --format 'docker_server={{.Server.Version}}' 2>&1
+          Write-Output '=== containers ==='
+          docker ps -a --filter 'name=maple' --format '{{.Names}}|{{.Status}}|{{.Ports}}' 2>&1
+          Write-Output '=== port9040 ==='
+          Get-NetTCPConnection -State Listen -LocalPort 9040 -ErrorAction SilentlyContinue | ForEach-Object { Write-Output ($_.LocalAddress + ':' + $_.LocalPort + '|pid=' + $_.OwningProcess) }
+          PWSH
+
+          encoded="$(iconv -f UTF-8 -t UTF-16LE "$RUNNER_TEMP/probe.ps1" | base64 -w0)"
+          set +e
+          output="$("${auth[@]}" -p "$port" -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SERVER_USER@$SERVER_HOST" "powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded" 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output" | tee deploy/status/runtime-probe.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Publish probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/status/runtime-probe.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: record Maple runtime probe"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+          test '${{ steps.probe.outputs.exit_code }}' = '0'
