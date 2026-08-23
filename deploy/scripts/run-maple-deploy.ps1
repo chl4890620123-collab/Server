@@ -7,6 +7,9 @@ $DeployScript = Join-Path $ServerRoot "deploy\scripts\deploy-maple.ps1"
 $PublishScript = Join-Path $ServerRoot "deploy\scripts\publish-maple-status.ps1"
 $DockerRuntimeRoot = "D:\server-data\maple\runtime\docker-cli"
 $DockerPluginRoot = Join-Path $DockerRuntimeRoot "cli-plugins"
+$TunnelBuildRoot = "D:\server-data\maple\runtime\cloudflared-image"
+$CloudflaredBinary = Join-Path $TunnelBuildRoot "cloudflared"
+$TunnelDockerfile = Join-Path $TunnelBuildRoot "Dockerfile"
 
 function Get-ContainerLogsSafe([string]$Name, [int]$Tail = 80) {
     $oldPreference = $ErrorActionPreference
@@ -85,6 +88,43 @@ docker compose version *> $null
 if ($LASTEXITCODE -ne 0) {
     throw "Docker Compose is not available through the isolated deployment config."
 }
+
+# Build the Cloudflared preview image locally. This avoids Docker Hub's
+# credential helper entirely while keeping the tunnel managed by Docker.
+New-Item -ItemType Directory -Force -Path $TunnelBuildRoot | Out-Null
+$downloadCloudflared = $true
+if (Test-Path $CloudflaredBinary) {
+    $existingBinary = Get-Item $CloudflaredBinary -ErrorAction SilentlyContinue
+    if ($existingBinary -and $existingBinary.Length -gt 1MB) {
+        $downloadCloudflared = $false
+    }
+}
+
+if ($downloadCloudflared) {
+    $cloudflaredUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
+    Write-Host "[maple] downloading Cloudflared Linux binary from GitHub Releases"
+    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+    if ($curl) {
+        & $curl.Source -fL --retry 3 --connect-timeout 20 --output $CloudflaredBinary $cloudflaredUrl
+        if ($LASTEXITCODE -ne 0) {
+            throw "Cloudflared binary download failed."
+        }
+    } else {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Invoke-WebRequest -UseBasicParsing -Uri $cloudflaredUrl -OutFile $CloudflaredBinary -TimeoutSec 120
+    }
+}
+
+if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary).Length -le 1MB) {
+    throw "Cloudflared binary is missing or invalid after download."
+}
+
+@"
+FROM caddy:2.10-alpine
+COPY --chmod=0755 cloudflared /usr/local/bin/cloudflared
+ENTRYPOINT ["/usr/local/bin/cloudflared"]
+"@ | Set-Content -Path $TunnelDockerfile -Encoding ascii
+$env:MAPLE_TUNNEL_DIR = ($TunnelBuildRoot -replace "\\", "/")
 
 try {
     & $DeployScript
