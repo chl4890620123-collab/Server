@@ -1,6 +1,7 @@
 services:
   maple-db:
     image: mariadb:11.4
+    pull_policy: never
     container_name: maple-db
     restart: unless-stopped
     environment:
@@ -27,15 +28,16 @@ services:
         max-file: "3"
 
   maple-app:
-    build:
-      context: ${MAPLE_SOURCE_DIR:?MAPLE_SOURCE_DIR is required}
-      dockerfile: Dockerfile
+    image: python:3.12-slim
+    pull_policy: never
     container_name: maple-app
     restart: unless-stopped
+    working_dir: /app
     depends_on:
       maple-db:
         condition: service_healthy
     environment:
+      PYTHONPATH: /deps
       DB_ENGINE: mariadb
       DB_HOST: maple-db
       DB_PORT: 3306
@@ -45,12 +47,28 @@ services:
       ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN is required}
       DEFAULT_FEE_RATE: ${DEFAULT_FEE_RATE:-0.05}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
+    command:
+      - sh
+      - -c
+      - >-
+        if [ ! -f /deps/uvicorn/__init__.py ] || [ ! -f /deps/fastapi/__init__.py ]; then
+          python -m pip install --disable-pip-version-check --no-cache-dir --target /deps -r /app/requirements.txt;
+        fi;
+        exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - type: bind
+        source: ${MAPLE_SOURCE_DIR:?MAPLE_SOURCE_DIR is required}
+        target: /app
+        read_only: true
+      - type: bind
+        source: ${MAPLE_PYTHON_DEPS_DIR:?MAPLE_PYTHON_DEPS_DIR is required}
+        target: /deps
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()"]
       interval: 10s
       timeout: 5s
-      retries: 12
-      start_period: 15s
+      retries: 18
+      start_period: 30s
     networks:
       - maple-internal
     logging:
@@ -61,6 +79,7 @@ services:
 
   maple-caddy:
     image: caddy:2.10-alpine
+    pull_policy: never
     container_name: maple-caddy
     restart: unless-stopped
     depends_on:
@@ -82,15 +101,19 @@ services:
         max-file: "3"
 
   maple-public-tunnel:
-    build:
-      context: ${MAPLE_TUNNEL_DIR:?MAPLE_TUNNEL_DIR is required}
-      dockerfile: Dockerfile
-    image: maple-cloudflared-local:latest
+    image: caddy:2.10-alpine
+    pull_policy: never
     container_name: maple-public-tunnel
     restart: unless-stopped
     depends_on:
       - maple-caddy
-    command: tunnel --no-autoupdate --url http://maple-caddy:8080
+    entrypoint: ["/usr/local/bin/cloudflared"]
+    command: ["tunnel", "--no-autoupdate", "--url", "http://maple-caddy:8080"]
+    volumes:
+      - type: bind
+        source: ${MAPLE_CLOUDFLARED_BINARY:?MAPLE_CLOUDFLARED_BINARY is required}
+        target: /usr/local/bin/cloudflared
+        read_only: true
     networks:
       - maple-internal
     logging:
