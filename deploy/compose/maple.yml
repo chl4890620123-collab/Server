@@ -81,6 +81,24 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  maple-public-tunnel:
+    build:
+      context: ${MAPLE_TUNNEL_DIR:?MAPLE_TUNNEL_DIR is required}
+      dockerfile: Dockerfile
+    image: maple-cloudflared-local:latest
+    container_name: maple-public-tunnel
+    restart: unless-stopped
+    depends_on:
+      - maple-caddy
+    command: tunnel --no-autoupdate --url http://maple-caddy:8080
+    networks:
+      - maple-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 networks:
   maple-internal:
     name: maple-internal
