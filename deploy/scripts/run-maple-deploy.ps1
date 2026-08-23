@@ -6,6 +6,7 @@ $ErrorFile = Join-Path $StatusRoot "maple-error.txt"
 $DeployScript = Join-Path $ServerRoot "deploy\scripts\deploy-maple.ps1"
 $PublishScript = Join-Path $ServerRoot "deploy\scripts\publish-maple-status.ps1"
 $DockerRuntimeRoot = "D:\server-data\maple\runtime\docker-cli"
+$DockerPluginRoot = Join-Path $DockerRuntimeRoot "cli-plugins"
 
 function Get-ContainerLogsSafe([string]$Name, [int]$Tail = 80) {
     $oldPreference = $ErrorActionPreference
@@ -46,16 +47,43 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($dockerHost)) {
 }
 
 New-Item -ItemType Directory -Force -Path $DockerRuntimeRoot | Out-Null
+New-Item -ItemType Directory -Force -Path $DockerPluginRoot | Out-Null
 '{"auths":{}}' | Set-Content -Path (Join-Path $DockerRuntimeRoot "config.json") -Encoding ascii
+
+# Keep Docker Desktop CLI plugins (Compose/Buildx) available without copying
+# the user's credential store configuration.
+$pluginSources = @(
+    (Join-Path $env:USERPROFILE ".docker\cli-plugins"),
+    (Join-Path $env:ProgramFiles "Docker\Docker\resources\cli-plugins"),
+    (Join-Path $env:ProgramFiles "Docker\cli-plugins")
+)
+$pluginCount = 0
+foreach ($pluginSource in $pluginSources) {
+    if (Test-Path $pluginSource) {
+        Get-ChildItem $pluginSource -Filter "docker-*.exe" -File -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $DockerPluginRoot $_.Name) -Force
+            $pluginCount++
+        }
+    }
+}
+if ($pluginCount -eq 0) {
+    throw "Docker CLI plugins could not be found on the mini PC."
+}
+
 $env:DOCKER_CONFIG = $DockerRuntimeRoot
 $env:DOCKER_HOST = $dockerHost
 Remove-Item Env:DOCKER_CONTEXT -ErrorAction SilentlyContinue
 
 Write-Host "[maple] using isolated Docker CLI config for SSH deployment"
+Write-Host "[maple] copied Docker CLI plugins: $pluginCount"
 
 docker version *> $null
 if ($LASTEXITCODE -ne 0) {
     throw "Docker engine is not reachable through the isolated deployment config."
+}
+docker compose version *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker Compose is not available through the isolated deployment config."
 }
 
 try {
