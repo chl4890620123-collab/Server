@@ -4,6 +4,13 @@ name: Build and deploy Server
 on:
   push:
     branches: [main]
+    paths:
+      - "Dockerfile"
+      - "docker-compose.yml"
+      - "nginx/**"
+      - "public/**"
+      - "deploy/scripts/deploy.ps1"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
 concurrency:
@@ -46,6 +53,7 @@ jobs:
         with:
           context: .
           file: Dockerfile
+          platforms: linux/amd64
           push: true
           tags: |
             ${{ steps.image.outputs.name }}:${{ github.sha }}

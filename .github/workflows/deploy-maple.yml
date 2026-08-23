@@ -1,0 +1,103 @@
+name: Deploy Maple centrally
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy-maple.yml"
+      - "deploy/compose/maple.yml"
+      - "deploy/scripts/deploy-maple.ps1"
+      - "deploy/runtime/maple.env.example"
+      - "deploy/caddy/maple.Caddyfile.example"
+      - "deploy/README.md"
+  schedule:
+    - cron: "*/15 * * * *"
+
+concurrency:
+  group: server-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Server repository
+        uses: actions/checkout@v4
+
+      - name: Checkout latest Maple source
+        uses: actions/checkout@v4
+        with:
+          repository: chl4890620123-collab/maple
+          ref: main
+          path: sources/maple
+          persist-credentials: false
+
+      - name: Resolve Maple image and source SHA
+        id: maple
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git -C sources/maple rev-parse HEAD)"
+          image="ghcr.io/chl4890620123-collab/server-maple"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check whether exact Maple image already exists
+        id: image_check
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="${{ steps.maple.outputs.image }}:${{ steps.maple.outputs.sha }}"
+          if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and push Maple image
+        if: steps.image_check.outputs.exists != 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: ./sources/maple
+          file: ./sources/maple/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.maple.outputs.image }}:${{ steps.maple.outputs.sha }}
+            ${{ steps.maple.outputs.image }}:latest
+          cache-from: type=gha,scope=maple-central
+          cache-to: type=gha,mode=max,scope=maple-central
+          labels: |
+            org.opencontainers.image.source=https://github.com/chl4890620123-collab/maple
+            org.opencontainers.image.revision=${{ steps.maple.outputs.sha }}
+
+      - name: Deploy Maple through Server runtime
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          password: ${{ secrets.SERVER_PASSWORD }}
+          port: ${{ secrets.SERVER_PORT }}
+          command_timeout: 20m
+          script: |
+            if not exist C:\home\server mkdir C:\home\server
+            if not exist C:\home\server\app git clone https://github.com/${{ github.repository }}.git C:\home\server\app
+            cd /d C:\home\server\app && git reset --hard HEAD && git clean -fd && git fetch --prune origin main && git checkout -B main origin/main && git reset --hard origin/main && git clean -fd && powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\home\server\app\deploy\scripts\deploy-maple.ps1 -MapleImage "${{ steps.maple.outputs.image }}:${{ steps.maple.outputs.sha }}" -SourceSha "${{ steps.maple.outputs.sha }}" -RegistryUser "${{ github.actor }}" -RegistryToken "${{ secrets.GITHUB_TOKEN }}"
