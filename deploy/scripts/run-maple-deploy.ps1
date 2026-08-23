@@ -5,8 +5,36 @@ $StatusRoot = Join-Path $ServerRoot "deploy\status"
 $ErrorFile = Join-Path $StatusRoot "maple-error.txt"
 $DeployScript = Join-Path $ServerRoot "deploy\scripts\deploy-maple.ps1"
 $PublishScript = Join-Path $ServerRoot "deploy\scripts\publish-maple-status.ps1"
+$DockerRuntimeRoot = "D:\server-data\maple\runtime\docker-cli"
 
 New-Item -ItemType Directory -Force -Path $StatusRoot | Out-Null
+
+# Docker Desktop's default config can use the Windows credential manager.
+# That credential helper is not available inside a non-interactive SSH logon.
+# Resolve the already-working Docker engine endpoint first, then use an
+# isolated credential-free config only for this deployment process.
+$currentContext = (docker context show 2>$null | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($currentContext)) {
+    throw "Could not resolve the current Docker context."
+}
+
+$dockerHost = (docker context inspect $currentContext --format "{{.Endpoints.docker.Host}}" 2>$null | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($dockerHost)) {
+    throw "Could not resolve the Docker engine endpoint for context '$currentContext'."
+}
+
+New-Item -ItemType Directory -Force -Path $DockerRuntimeRoot | Out-Null
+'{"auths":{}}' | Set-Content -Path (Join-Path $DockerRuntimeRoot "config.json") -Encoding ascii
+$env:DOCKER_CONFIG = $DockerRuntimeRoot
+$env:DOCKER_HOST = $dockerHost
+Remove-Item Env:DOCKER_CONTEXT -ErrorAction SilentlyContinue
+
+Write-Host "[maple] using isolated Docker CLI config for SSH deployment"
+
+docker version *> $null
+if ($LASTEXITCODE -ne 0) {
+    throw "Docker engine is not reachable through the isolated deployment config."
+}
 
 try {
     & $DeployScript
