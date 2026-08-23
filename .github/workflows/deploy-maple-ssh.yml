@@ -54,7 +54,7 @@ jobs:
           timeout: 30s
           command_timeout: 1m
           capture_stdout: true
-          script: echo maple-ssh-ok
+          script: powershell.exe -NoProfile -NonInteractive -Command "Write-Output 'maple-ssh-ok'"
 
       - name: Deploy Maple through existing mini PC SSH
         id: deploy_maple
@@ -71,11 +71,10 @@ jobs:
           command_timeout: 25m
           capture_stdout: true
           script: |
-            if not exist C:\home\server mkdir C:\home\server
-            if not exist C:\home\server\app git clone https://github.com/chl4890620123-collab/Server.git C:\home\server\app
-            cd /d C:\home\server\app && git reset --hard HEAD && git clean -fd && git fetch --prune origin main && git checkout -B main origin/main && git reset --hard origin/main && git clean -fd && powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File C:\home\server\app\deploy\scripts\run-maple-deploy.ps1
+            powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $path='C:\home\server\app'; $parent=Split-Path $path -Parent; New-Item -ItemType Directory -Force -Path $parent | Out-Null; if (-not (Test-Path (Join-Path $path '.git'))) { if (Test-Path $path) { Remove-Item -Recurse -Force $path }; git clone 'https://github.com/chl4890620123-collab/Server.git' $path; if ($LASTEXITCODE -ne 0) { throw 'Server clone failed' } }; Set-Location $path; git reset --hard HEAD; if ($LASTEXITCODE -ne 0) { throw 'Server reset failed' }; git clean -fd; if ($LASTEXITCODE -ne 0) { throw 'Server clean failed' }; git fetch --prune origin main; if ($LASTEXITCODE -ne 0) { throw 'Server fetch failed' }; git checkout -B main origin/main; if ($LASTEXITCODE -ne 0) { throw 'Server checkout failed' }; git reset --hard origin/main; if ($LASTEXITCODE -ne 0) { throw 'Server main reset failed' }; git clean -fd; if ($LASTEXITCODE -ne 0) { throw 'Server final clean failed' }; & '.\deploy\scripts\run-maple-deploy.ps1'"
 
       - name: Record SSH and deployment result
+        id: record
         shell: bash
         env:
           DEPLOY_STDOUT: ${{ steps.deploy_maple.outputs.stdout }}
@@ -83,25 +82,19 @@ jobs:
           set -euo pipefail
           available='${{ steps.ssh.outputs.available }}'
           probe='${{ steps.probe.outcome }}'
-          deployment='${{ steps.deploy_maple.outcome }}'
+          action_outcome='${{ steps.deploy_maple.outcome }}'
           [ -n "$probe" ] || probe=skipped
-          [ -n "$deployment" ] || deployment=skipped
+          [ -n "$action_outcome" ] || action_outcome=skipped
+          final="$action_outcome"
 
           mkdir -p deploy/status
-          cat > deploy/status/transport.txt <<EOF
-          ssh_fallback_available=$available
-          ssh_connection=$probe
-          deployment=$deployment
-          EOF
           printf '%s\n' "$DEPLOY_STDOUT" > deploy/status/ssh-output.txt
 
-          if [ "$deployment" = "success" ]; then
+          if [ "$action_outcome" = "success" ]; then
             public_url="$(printf '%s\n' "$DEPLOY_STDOUT" | grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -n 1 || true)"
             maple_sha="$(printf '%s\n' "$DEPLOY_STDOUT" | sed -n 's/^.*\[maple\] source SHA: \([0-9a-f]\{40\}\).*$/\1/p' | tail -n 1)"
             if [ -z "$public_url" ]; then
-              echo 'Deployment succeeded but public URL was not captured.'
-              deployment=failure
-              sed -i 's/^deployment=.*/deployment=failure/' deploy/status/transport.txt
+              final=failure
             else
               cat > deploy/status/maple.txt <<EOF
           maple_sha=$maple_sha
@@ -110,6 +103,13 @@ jobs:
           EOF
             fi
           fi
+
+          cat > deploy/status/transport.txt <<EOF
+          ssh_fallback_available=$available
+          ssh_connection=$probe
+          deployment=$final
+          EOF
+          echo "final=$final" >> "$GITHUB_OUTPUT"
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -135,7 +135,7 @@ jobs:
             echo 'SSH connection probe failed.'
             exit 1
           fi
-          if [ '${{ steps.deploy_maple.outcome }}' != 'success' ]; then
-            echo 'Maple remote deployment failed.'
+          if [ '${{ steps.record.outputs.final }}' != 'success' ]; then
+            echo 'Maple deployment or public URL verification failed.'
             exit 1
           fi
