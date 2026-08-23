@@ -61,7 +61,7 @@ jobs:
           Write-Output '=== containers ==='
           docker ps -a --filter 'name=maple' --format '{{.Names}}|{{.Status}}|{{.Ports}}' 2>&1
           Write-Output '=== images ==='
-          docker images --format '{{.Repository}}:{{.Tag}}|{{.Size}}' 2>&1 | Select-String -Pattern 'mariadb|caddy|cloudflare|maple'
+          docker images --format '{{.Repository}}:{{.Tag}}|{{.Size}}' 2>&1 | Select-String -Pattern 'python|mariadb|caddy|cloudflare|maple'
           Write-Output '=== tunnel ==='
           if (docker ps -a --format '{{.Names}}' | Select-String -SimpleMatch 'maple-public-tunnel') {
               docker logs --tail 40 maple-public-tunnel 2>&1
