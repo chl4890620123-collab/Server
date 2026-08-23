@@ -34,13 +34,11 @@ jobs:
           chmod 700 "$HOME/.ssh"
           port="${SERVER_PORT:-22}"
           key_args=()
-
           if [ -n "$SERVER_SSH_KEY" ]; then
             printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/maple_probe_key"
             chmod 600 "$HOME/.ssh/maple_probe_key"
             key_args=(-i "$HOME/.ssh/maple_probe_key")
           fi
-
           if [ -n "$SERVER_PASSWORD" ]; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq sshpass
@@ -54,19 +52,20 @@ jobs:
           $ErrorActionPreference = 'Continue'
           Write-Output ('utc=' + (Get-Date).ToUniversalTime().ToString('o'))
           Write-Output ('d_drive=' + (Test-Path 'D:\'))
-          Write-Output ('server_repo=' + (Test-Path 'C:\home\server\app\.git'))
-          Write-Output ('maple_source=' + (Test-Path 'C:\home\server\sources\maple\.git'))
-          Write-Output ('runtime_env=' + (Test-Path 'D:\server-data\maple\runtime\.env'))
           Write-Output ('docker_cli=' + [bool](Get-Command docker -ErrorAction SilentlyContinue))
           docker version --format 'docker_server={{.Server.Version}}' 2>&1
           Write-Output '=== containers ==='
           docker ps -a --filter 'name=maple' --format '{{.Names}}|{{.Status}}|{{.Ports}}' 2>&1
-          Write-Output '=== images ==='
-          docker images --format '{{.Repository}}:{{.Tag}}|{{.Size}}' 2>&1 | Select-String -Pattern 'python|mariadb|caddy|cloudflare|maple'
+          Write-Output '=== app-health ==='
+          docker inspect --format '{{json .State.Health}}' maple-app 2>&1
+          Write-Output '=== app-state ==='
+          docker inspect --format '{{json .State}}' maple-app 2>&1
+          Write-Output '=== app-logs ==='
+          docker logs --tail 160 maple-app 2>&1
+          Write-Output '=== db-logs ==='
+          docker logs --tail 40 maple-db 2>&1
           Write-Output '=== tunnel ==='
-          if (docker ps -a --format '{{.Names}}' | Select-String -SimpleMatch 'maple-public-tunnel') {
-              docker logs --tail 40 maple-public-tunnel 2>&1
-          }
+          docker logs --tail 80 maple-public-tunnel 2>&1
           Write-Output '=== port9040 ==='
           Get-NetTCPConnection -State Listen -LocalPort 9040 -ErrorAction SilentlyContinue | ForEach-Object { Write-Output ($_.LocalAddress + ':' + $_.LocalPort + '|pid=' + $_.OwningProcess) }
           PWSH
