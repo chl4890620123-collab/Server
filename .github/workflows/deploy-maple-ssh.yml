@@ -43,6 +43,28 @@ jobs:
           fi
           echo "available=$available" >> "$GITHUB_OUTPUT"
 
+      - name: Record deployment start
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/status
+          cat > deploy/status/transport.txt <<EOF
+          run_id=${{ github.run_id }}
+          run_attempt=${{ github.run_attempt }}
+          ssh_fallback_available=${{ steps.ssh.outputs.available }}
+          ssh_connection=pending
+          remote_exit_code=pending
+          deployment=running
+          EOF
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/status/transport.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: mark Maple deployment running"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
       - name: Run Maple deployment with native SSH
         id: deploy
         if: steps.ssh.outputs.available == 'true'
@@ -146,6 +168,8 @@ jobs:
           fi
 
           cat > deploy/status/transport.txt <<EOF
+          run_id=${{ github.run_id }}
+          run_attempt=${{ github.run_attempt }}
           ssh_fallback_available=$available
           ssh_connection=$([ "$available" = 'true' ] && echo success || echo unavailable)
           remote_exit_code=$exit_code
