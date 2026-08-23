@@ -9,20 +9,22 @@ GitHub Actions
   -> Self-hosted Windows Runner
   -> Docker Compose
   -> Nginx 테스트 프론트
-  -> /health = ok
+  -> / 화면 HTTP 200 확인
 ```
 
 ## 현재 포함하는 것
 
-- Self-hosted Windows Runner에서 실행되는 수동 workflow 1개
+- Self-hosted Windows Runner에서 실행되는 workflow 1개
 - Dockerfile
 - Docker Compose
 - Nginx
 - 임시 테스트 프론트
-- `/health` 엔드포인트
+- `/` 화면 200 응답 검증
 
 ## 현재 의도적으로 뺀 것
 
+- 전용 health endpoint
+- Docker healthcheck
 - 외부 SSH 배포
 - 서버 비밀번호/SSH Secret
 - GHCR 이미지 배포
@@ -84,17 +86,7 @@ http://127.0.0.1:9010
 http://<미니PC-내부-IP>:9010
 ```
 
-Health check:
-
-```text
-http://127.0.0.1:9010/health
-```
-
-응답:
-
-```text
-ok
-```
+화면이 정상 표시되고 workflow에서 HTTP 200 확인이 통과하면 성공입니다.
 
 ## 성공 후 다음 단계
 
