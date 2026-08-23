@@ -1,0 +1,101 @@
+services:
+  maple-db:
+    image: mariadb:11.4
+    container_name: maple-db
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${DB_NAME:?DB_NAME is required}
+      MARIADB_USER: ${DB_USER:?DB_USER is required}
+      MARIADB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?DB_ROOT_PASSWORD is required}
+    volumes:
+      - type: bind
+        source: ${MAPLE_DB_DATA_DIR:?MAPLE_DB_DATA_DIR is required}
+        target: /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 15s
+    networks:
+      - maple-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  maple-app:
+    build:
+      context: ${MAPLE_SOURCE_DIR:?MAPLE_SOURCE_DIR is required}
+      dockerfile: Dockerfile
+    container_name: maple-app
+    restart: unless-stopped
+    depends_on:
+      maple-db:
+        condition: service_healthy
+    environment:
+      DB_ENGINE: mariadb
+      DB_HOST: maple-db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME:?DB_NAME is required}
+      DB_USER: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN is required}
+      DEFAULT_FEE_RATE: ${DEFAULT_FEE_RATE:-0.05}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3).read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    networks:
+      - maple-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  maple-caddy:
+    image: caddy:2-alpine
+    container_name: maple-caddy
+    restart: unless-stopped
+    depends_on:
+      maple-app:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${MAPLE_LOCAL_PORT:-9040}:8080"
+    volumes:
+      - type: bind
+        source: ${MAPLE_CADDYFILE:?MAPLE_CADDYFILE is required}
+        target: /etc/caddy/Caddyfile
+        read_only: true
+    networks:
+      - maple-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  maple-public-tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: maple-public-tunnel
+    restart: unless-stopped
+    depends_on:
+      - maple-caddy
+    command: tunnel --no-autoupdate --url http://maple-caddy:8080
+    networks:
+      - maple-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  maple-internal:
+    name: maple-internal
