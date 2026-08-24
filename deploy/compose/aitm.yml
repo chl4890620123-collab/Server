@@ -70,12 +70,13 @@ services:
       ai:
         condition: service_healthy
     environment:
-      DB_URL: jdbc:mariadb://mariadb:3306/${DB_NAME:?DB_NAME is required}?useUnicode=true&characterEncoding=UTF-8
-      DB_USERNAME: ${DB_USER:?DB_USER is required}
-      DB_PASSWORD: ${AITM_DB_PASSWORD:?AITM_DB_PASSWORD is required}
-      AI_SERVICE_URL: http://ai:8000
+      RESTOK_DB_URL: jdbc:mariadb://mariadb:3306/${DB_NAME:?DB_NAME is required}?useUnicode=true&characterEncoding=UTF-8
+      RESTOK_DB_USER: ${DB_USER:?DB_USER is required}
+      RESTOK_DB_PASSWORD: ${AITM_DB_PASSWORD:?AITM_DB_PASSWORD is required}
+      RESTOK_AI_ENGINE_URL: http://ai:8000/analyze-full
       RESTOK_AI_SECURE_TOKEN: ${AITM_AI_SECURE_TOKEN:?AITM_AI_SECURE_TOKEN is required}
       AITM_VIDEO_DIR: /app/data/videos
+      AITM_ALLOWED_VIDEO_HOSTS: ${AITM_ALLOWED_VIDEO_HOSTS:-storage.googleapis.com}
       APP_DATABASE_CHARSET_MIGRATION_ENABLED: ${DB_CHARSET_MIGRATION_ENABLED:-false}
       APP_DATABASE_CHARSET_MIGRATION_LOCK_WAIT_SECONDS: ${DB_CHARSET_MIGRATION_LOCK_WAIT_SECONDS:-10}
     volumes:
