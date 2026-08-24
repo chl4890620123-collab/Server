@@ -1,6 +1,13 @@
-checked_utc=2026-08-24T15:59:10.6373269Z
+checked_utc=2026-08-24T16:00:08.0666949Z
 bundle_present=True
-bundle_bytes=172861440
+bundle_bytes=179128320
+bundle_modified_utc=2026-08-24T16:00:07.4631983Z
+docker_load_processes=0
+image_restok_production_ai_latest=False
+image_restok_production_backend_latest=False
+image_restok_production_frontend_latest=False
+image_mariadb_11_4=True
+image_caddy_2_10_alpine=True
 restok-db=missing
 restok-ai=missing
 restok-backend=missing
