@@ -13,6 +13,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".github/workflows/deploy-restok.yml"
       - ".github/workflows/validate-restok-deploy.yml"
       - "deploy/compose/restok.yml"
       - "deploy/caddy/restok.Caddyfile"
@@ -53,19 +54,30 @@ jobs:
 
       - name: Validate Restok production Compose
         env:
-          RESTOK_SOURCE_DIR: /tmp/restok-source
           RESTOK_DB_DATA_DIR: /tmp/restok-db
           RESTOK_UPLOAD_DATA_DIR: /tmp/restok-uploads
           RESTOK_CADDYFILE: /tmp/restok.Caddyfile
-          RESTOK_CLOUDFLARED_BINARY: /tmp/cloudflared
           RESTOK_LOCAL_PORT: "9050"
+          RESTOK_AI_IMAGE: restok-ai:test
+          RESTOK_BACKEND_IMAGE: restok-backend:test
+          RESTOK_FRONTEND_IMAGE: restok-frontend:test
+          RESTOK_MARIADB_IMAGE: mariadb:11.4
+          RESTOK_CADDY_IMAGE: caddy:2.10-alpine
+          RESTOK_CLOUDFLARED_IMAGE: cloudflare/cloudflared:latest
           DB_NAME: restock_db
           DB_USER: restok
           DB_PASSWORD: ci-db-password
           DB_ROOT_PASSWORD: ci-root-password
           JWT_SECRET: ci-jwt-secret-that-is-at-least-32-bytes-long
           GEMINI_API_KEY: ""
-        run: docker compose -p restok-validation -f deploy/compose/restok.yml config >/dev/null
+        run: |
+          docker compose -p restok-validation -f deploy/compose/restok.yml config >/dev/null
+          if grep -qE '^\s*build:' deploy/compose/restok.yml; then
+            echo 'Production Restok compose must not build images on the mini PC.'
+            exit 1
+          fi
+          count="$(grep -c 'pull_policy: never' deploy/compose/restok.yml)"
+          test "$count" -eq 6
 
       - name: Validate Caddyfile
         run: |
