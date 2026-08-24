@@ -9,7 +9,7 @@ on:
       - "deploy/status/restok-probe-trigger.txt"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   probe:
@@ -30,7 +30,7 @@ jobs:
           SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
         run: |
           set -euo pipefail
-          mkdir -p deploy/status "$HOME/.ssh"
+          mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
           port="${SERVER_PORT:-22}"
           key_args=()
@@ -112,19 +112,18 @@ jobs:
           output="$("${auth[@]}" -p "$port" -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SERVER_USER@$SERVER_HOST" "powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded" 2>&1)"
           code=$?
           set -e
-          printf '%s\n' "$output" | tee deploy/status/restok-runtime-probe.txt
+          printf '%s\n' "$output" | tee "$RUNNER_TEMP/restok-runtime-probe.txt"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
-      - name: Publish probe
+      - name: Upload probe diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: restok-runtime-probe-${{ github.run_id }}
+          path: ${{ runner.temp }}/restok-runtime-probe.txt
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Enforce probe result
         shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/status/restok-runtime-probe.txt
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: record Restok runtime probe"
-            git pull --rebase origin main
-            git push origin HEAD:main
-          fi
-          test '${{ steps.probe.outputs.exit_code }}' = '0'
+        run: test '${{ steps.probe.outputs.exit_code }}' = '0'
