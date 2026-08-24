@@ -1,7 +1,7 @@
-run_id=32779118326
+run_id=32781772080
 run_attempt=1
 event=schedule
 ssh_fallback_available=true
-ssh_connection=success
-remote_exit_code=0
-deployment=success
+ssh_connection=pending
+remote_exit_code=pending
+deployment=running
