@@ -1,6 +1,7 @@
 services:
   mariadb:
-    image: mariadb:11.4
+    image: ${RESTOK_MARIADB_IMAGE:?RESTOK_MARIADB_IMAGE is required}
+    pull_policy: never
     container_name: restok-db
     restart: unless-stopped
     command:
@@ -30,8 +31,8 @@ services:
         max-file: "3"
 
   ai:
-    build:
-      context: ${RESTOK_SOURCE_DIR:?RESTOK_SOURCE_DIR is required}/ai_server
+    image: ${RESTOK_AI_IMAGE:?RESTOK_AI_IMAGE is required}
+    pull_policy: never
     container_name: restok-ai
     restart: unless-stopped
     environment:
@@ -53,8 +54,8 @@ services:
         max-file: "3"
 
   backend:
-    build:
-      context: ${RESTOK_SOURCE_DIR:?RESTOK_SOURCE_DIR is required}/backend
+    image: ${RESTOK_BACKEND_IMAGE:?RESTOK_BACKEND_IMAGE is required}
+    pull_policy: never
     container_name: restok-backend
     restart: unless-stopped
     depends_on:
@@ -77,6 +78,7 @@ services:
       STATIC_FILE_LOCATION: file:/app/data/uploads/
       APP_CORS_ALLOWED_ORIGINS: ${APP_CORS_ALLOWED_ORIGINS:-http://localhost:9050}
       DB_CHARSET_MIGRATION_ENABLED: ${DB_CHARSET_MIGRATION_ENABLED:-false}
+      DB_CHARSET_MIGRATION_LOCK_WAIT_SECONDS: ${DB_CHARSET_MIGRATION_LOCK_WAIT_SECONDS:-10}
       JPA_SHOW_SQL: "false"
     volumes:
       - type: bind
@@ -91,11 +93,8 @@ services:
         max-file: "3"
 
   frontend:
-    build:
-      context: ${RESTOK_SOURCE_DIR:?RESTOK_SOURCE_DIR is required}/frontend
-      args:
-        REACT_APP_API_URL: ""
-        REACT_APP_GOOGLE_OAUTH_ENABLED: ${REACT_APP_GOOGLE_OAUTH_ENABLED:-false}
+    image: ${RESTOK_FRONTEND_IMAGE:?RESTOK_FRONTEND_IMAGE is required}
+    pull_policy: never
     container_name: restok-frontend
     restart: unless-stopped
     depends_on:
@@ -109,7 +108,8 @@ services:
         max-file: "3"
 
   caddy:
-    image: caddy:2.10-alpine
+    image: ${RESTOK_CADDY_IMAGE:?RESTOK_CADDY_IMAGE is required}
+    pull_policy: never
     container_name: restok-caddy
     restart: unless-stopped
     depends_on:
@@ -130,18 +130,13 @@ services:
         max-file: "3"
 
   public-tunnel:
-    image: caddy:2.10-alpine
+    image: ${RESTOK_CLOUDFLARED_IMAGE:?RESTOK_CLOUDFLARED_IMAGE is required}
+    pull_policy: never
     container_name: restok-public-tunnel
     restart: unless-stopped
     depends_on:
       - caddy
-    entrypoint: ["/usr/local/bin/cloudflared"]
     command: ["tunnel", "--no-autoupdate", "--url", "http://caddy:8080"]
-    volumes:
-      - type: bind
-        source: ${RESTOK_CLOUDFLARED_BINARY:?RESTOK_CLOUDFLARED_BINARY is required}
-        target: /usr/local/bin/cloudflared
-        read_only: true
     networks:
       - restok-internal
     logging:
