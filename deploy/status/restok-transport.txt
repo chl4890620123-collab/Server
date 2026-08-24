@@ -1,6 +1,6 @@
-run_id=32745397431
+run_id=32747595362
 run_attempt=1
-event=push
+event=schedule
 restok_sha=ad6cbb6d1ac760994050118867783b26b64c671d
 image_bundle=true
 ssh_available=true
