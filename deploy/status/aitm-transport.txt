@@ -1,0 +1,10 @@
+run_id=32747922170
+run_attempt=1
+event=push
+aitm_sha=dd2eea4b6de8b2c5160a07fea0cb52f698707017
+image_bundle=true
+ssh_available=true
+build=pending
+ssh_connection=pending
+remote_exit_code=pending
+deployment=running
