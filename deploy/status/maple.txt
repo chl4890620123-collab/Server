@@ -1,3 +1,3 @@
 maple_sha=34e409f22ec59a1c0260b1be17248795529f721e
-public_url=https://edward-spas-remix-created.trycloudflare.com
-public_health=https://edward-spas-remix-created.trycloudflare.com/api/health
+public_url=https://tours-acts-players-only.trycloudflare.com
+public_health=https://tours-acts-players-only.trycloudflare.com/api/health
