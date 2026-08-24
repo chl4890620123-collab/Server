@@ -52,7 +52,17 @@ jobs:
           Write-Output ('checked_utc=' + (Get-Date).ToUniversalTime().ToString('o'))
           $bundle = 'C:\home\server\restok-images.tar.gz'
           Write-Output ('bundle_present=' + (Test-Path $bundle))
-          if (Test-Path $bundle) { Write-Output ('bundle_bytes=' + (Get-Item $bundle).Length) }
+          if (Test-Path $bundle) {
+              $bundleItem = Get-Item $bundle
+              Write-Output ('bundle_bytes=' + $bundleItem.Length)
+              Write-Output ('bundle_modified_utc=' + $bundleItem.LastWriteTimeUtc.ToString('o'))
+          }
+          $dockerLoad = @(Get-CimInstance Win32_Process -Filter "Name='docker.exe'" | Where-Object { $_.CommandLine -match '(?i)docker(\.exe)?\s+load' })
+          Write-Output ('docker_load_processes=' + $dockerLoad.Count)
+          foreach ($image in @('restok-production-ai:latest','restok-production-backend:latest','restok-production-frontend:latest','mariadb:11.4','caddy:2.10-alpine')) {
+              docker image inspect $image *> $null
+              Write-Output (('image_' + ($image -replace '[^A-Za-z0-9]+','_')) + '=' + ($LASTEXITCODE -eq 0))
+          }
           foreach ($name in @('restok-db','restok-ai','restok-backend','restok-frontend','restok-caddy','restok-public-tunnel')) {
               $exists = (docker ps -a --filter "name=^/$name$" --format '{{.Names}}' | Out-String).Trim()
               if ($exists -eq $name) {
