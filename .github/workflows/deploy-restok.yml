@@ -18,6 +18,7 @@ on:
       - "deploy/caddy/restok.Caddyfile"
       - "deploy/runtime/restok.env.example"
       - "deploy/scripts/deploy-restok.ps1"
+      - "deploy/scripts/check-restok-legacy-data.ps1"
 
 permissions:
   contents: write
@@ -34,6 +35,12 @@ jobs:
     steps:
       - name: Checkout Server repository
         uses: actions/checkout@v5
+
+      - name: Protect legacy Restok data
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\deploy\scripts\check-restok-legacy-data.ps1
 
       - name: Deploy Restok safely
         shell: powershell
@@ -71,6 +78,8 @@ jobs:
         run: |
           Write-Host '=== docker ps -a ==='
           docker ps -a
+          Write-Host '=== Docker volumes matching Restok ==='
+          docker volume ls --format "{{.Name}}" | Select-String -Pattern 'restok|restock'
           Write-Host '=== Restok database logs ==='
           docker logs --tail 120 restok-db 2>$null
           Write-Host '=== Restok AI logs ==='
