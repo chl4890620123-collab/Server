@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: Force rebuild even when the deployed Restok SHA is already healthy
+        description: Force deployment even when the current Restok SHA is healthy
         required: false
         default: false
         type: boolean
@@ -25,20 +25,66 @@ permissions:
   contents: write
 
 concurrency:
-  group: server-restok-production-ssh
+  group: server-restok-production-bundle
   cancel-in-progress: true
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Checkout Server repository
         uses: actions/checkout@v5
 
-      - name: Detect existing Server SSH configuration
+      - name: Resolve latest Restok main
+        id: restok
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch main https://github.com/chl4890620123-collab/Restok-Rangchain.git "$RUNNER_TEMP/restok-source"
+          sha="$(git -C "$RUNNER_TEMP/restok-source" rev-parse HEAD)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "ai_image=restok-ai:$sha" >> "$GITHUB_OUTPUT"
+          echo "backend_image=restok-backend:$sha" >> "$GITHUB_OUTPUT"
+          echo "frontend_image=restok-frontend:$sha" >> "$GITHUB_OUTPUT"
+          echo "Restok SHA: $sha"
+
+      - name: Decide whether deployment is needed
+        id: decision
+        shell: bash
+        run: |
+          set -euo pipefail
+          needs_deploy=true
+          reason=change
+
+          if [ '${{ github.event_name }}' = 'schedule' ] && [ -f deploy/status/restok.txt ]; then
+            deployed_sha="$(sed -n 's/^restok_sha=//p' deploy/status/restok.txt | head -n 1)"
+            public_health="$(sed -n 's/^public_health=//p' deploy/status/restok.txt | head -n 1)"
+            if [ "$deployed_sha" = '${{ steps.restok.outputs.sha }}' ] && [ -n "$public_health" ]; then
+              if curl --fail --silent --show-error --max-time 12 "$public_health" >/dev/null; then
+                needs_deploy=false
+                reason=already-healthy
+              else
+                reason=public-health-failed
+              fi
+            else
+              reason=sha-changed
+            fi
+          fi
+
+          if [ '${{ github.event_name }}' = 'workflow_dispatch' ] && [ '${{ inputs.force }}' = 'true' ]; then
+            needs_deploy=true
+            reason=manual-force
+          fi
+
+          echo "needs_deploy=$needs_deploy" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"
+          echo "Deployment decision: $needs_deploy ($reason)"
+
+      - name: Detect Server SSH configuration
         id: ssh
+        if: steps.decision.outputs.needs_deploy == 'true'
         shell: bash
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
@@ -52,8 +98,13 @@ jobs:
             available=true
           fi
           echo "available=$available" >> "$GITHUB_OUTPUT"
+          if [ "$available" != 'true' ]; then
+            echo 'Server SSH configuration is unavailable.'
+            exit 1
+          fi
 
       - name: Record deployment start
+        if: steps.decision.outputs.needs_deploy == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -62,6 +113,8 @@ jobs:
           run_id=${{ github.run_id }}
           run_attempt=${{ github.run_attempt }}
           event=${{ github.event_name }}
+          restok_sha=${{ steps.restok.outputs.sha }}
+          transport=prebuilt-image-bundle
           ssh_available=${{ steps.ssh.outputs.available }}
           ssh_connection=pending
           remote_exit_code=pending
@@ -76,9 +129,45 @@ jobs:
             git push origin HEAD:main
           fi
 
-      - name: Run Restok deployment with native SSH
+      - name: Build and bundle all Restok images on GitHub runner
+        id: bundle
+        if: steps.decision.outputs.needs_deploy == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/restok-source"
+          sha='${{ steps.restok.outputs.sha }}'
+          bundle="$RUNNER_TEMP/restok-images-$sha.tar.gz"
+
+          docker build --pull -t '${{ steps.restok.outputs.ai_image }}' "$src/ai_server"
+          docker build --pull -t '${{ steps.restok.outputs.backend_image }}' "$src/backend"
+          docker build --pull \
+            --build-arg REACT_APP_API_URL='' \
+            --build-arg REACT_APP_GOOGLE_OAUTH_ENABLED=false \
+            -t '${{ steps.restok.outputs.frontend_image }}' \
+            "$src/frontend"
+
+          docker pull mariadb:11.4
+          docker pull caddy:2.10-alpine
+          docker pull cloudflare/cloudflared:latest
+
+          docker save \
+            '${{ steps.restok.outputs.ai_image }}' \
+            '${{ steps.restok.outputs.backend_image }}' \
+            '${{ steps.restok.outputs.frontend_image }}' \
+            mariadb:11.4 \
+            caddy:2.10-alpine \
+            cloudflare/cloudflared:latest \
+            | gzip -1 > "$bundle"
+
+          test -s "$bundle"
+          echo "path=$bundle" >> "$GITHUB_OUTPUT"
+          echo "name=restok-images-$sha.tar.gz" >> "$GITHUB_OUTPUT"
+          du -h "$bundle"
+
+      - name: Transfer bundle and deploy over SSH
         id: deploy
-        if: steps.ssh.outputs.available == 'true'
+        if: steps.decision.outputs.needs_deploy == 'true'
         shell: bash
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
@@ -103,50 +192,76 @@ jobs:
             sudo apt-get update -qq
             sudo apt-get install -y -qq sshpass
             export SSHPASS="$SERVER_PASSWORD"
-            auth=(sshpass -e ssh "${key_args[@]}")
+            ssh_cmd=(sshpass -e ssh "${key_args[@]}")
+            scp_cmd=(sshpass -e scp "${key_args[@]}")
           else
-            auth=(ssh "${key_args[@]}")
+            ssh_cmd=(ssh "${key_args[@]}")
+            scp_cmd=(scp "${key_args[@]}")
           fi
 
-          cat > "$RUNNER_TEMP/restok-remote.ps1" <<'PWSH'
-          $ErrorActionPreference = 'Stop'
-          $path = 'C:\home\server\app'
-          $parent = Split-Path $path -Parent
-          New-Item -ItemType Directory -Force -Path $parent | Out-Null
+          common_ssh=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+          remote="$SERVER_USER@$SERVER_HOST"
+          bundle='${{ steps.bundle.outputs.path }}'
+          bundle_name='${{ steps.bundle.outputs.name }}'
+          sha='${{ steps.restok.outputs.sha }}'
 
-          if (-not (Test-Path (Join-Path $path '.git'))) {
-              if (Test-Path $path) { Remove-Item -Recurse -Force $path }
-              git clone 'https://github.com/chl4890620123-collab/Server.git' $path
-              if ($LASTEXITCODE -ne 0) { throw 'Server clone failed' }
+          echo "Transferring prebuilt image bundle: $bundle_name"
+          "${scp_cmd[@]}" -P "$port" "${common_ssh[@]}" "$bundle" "$remote:$bundle_name"
+
+          cat > "$RUNNER_TEMP/restok-remote.ps1" <<PWSH
+          \$ErrorActionPreference = 'Stop'
+          \$serverPath = 'C:\\home\\server\\app'
+          \$parent = Split-Path \$serverPath -Parent
+          New-Item -ItemType Directory -Force -Path \$parent | Out-Null
+
+          if (-not (Test-Path (Join-Path \$serverPath '.git'))) {
+              if (Test-Path \$serverPath) { Remove-Item -Recurse -Force \$serverPath }
+              git clone 'https://github.com/chl4890620123-collab/Server.git' \$serverPath
+              if (\$LASTEXITCODE -ne 0) { throw 'Server clone failed' }
           }
 
-          Set-Location $path
+          Set-Location \$serverPath
           git reset --hard HEAD
-          if ($LASTEXITCODE -ne 0) { throw 'Server reset failed' }
+          if (\$LASTEXITCODE -ne 0) { throw 'Server reset failed' }
           git clean -fd
-          if ($LASTEXITCODE -ne 0) { throw 'Server clean failed' }
+          if (\$LASTEXITCODE -ne 0) { throw 'Server clean failed' }
           git fetch --prune origin main
-          if ($LASTEXITCODE -ne 0) { throw 'Server fetch failed' }
+          if (\$LASTEXITCODE -ne 0) { throw 'Server fetch failed' }
           git checkout -B main origin/main
-          if ($LASTEXITCODE -ne 0) { throw 'Server checkout failed' }
+          if (\$LASTEXITCODE -ne 0) { throw 'Server checkout failed' }
           git reset --hard origin/main
-          if ($LASTEXITCODE -ne 0) { throw 'Server main reset failed' }
+          if (\$LASTEXITCODE -ne 0) { throw 'Server main reset failed' }
           git clean -fd
-          if ($LASTEXITCODE -ne 0) { throw 'Server final clean failed' }
+          if (\$LASTEXITCODE -ne 0) { throw 'Server final clean failed' }
 
-          & '.\deploy\scripts\check-restok-legacy-data.ps1'
-          if (-not $?) { throw 'Restok legacy data preflight failed' }
+          & '.\\deploy\\scripts\\check-restok-legacy-data.ps1'
+          if (-not \$?) { throw 'Restok legacy data preflight failed' }
 
-          $forceDeploy = ('${{ github.event_name }}' -ne 'schedule') -or ('${{ inputs.force }}' -eq 'true')
-          & '.\deploy\scripts\deploy-restok.ps1' -Force:$forceDeploy
-          if (-not $?) { throw 'Restok deploy script failed' }
+          \$bundle = Join-Path \$env:USERPROFILE '$bundle_name'
+          if (-not (Test-Path \$bundle)) { throw "Restok image bundle not found: \$bundle" }
+
+          Write-Host '[restok] loading prebuilt image bundle'
+          docker load -i \$bundle
+          if (\$LASTEXITCODE -ne 0) { throw 'Restok image bundle load failed' }
+          Remove-Item -Path \$bundle -Force
+
+          \$env:RESTOK_DEPLOY_SHA = '$sha'
+          \$env:RESTOK_AI_IMAGE = 'restok-ai:$sha'
+          \$env:RESTOK_BACKEND_IMAGE = 'restok-backend:$sha'
+          \$env:RESTOK_FRONTEND_IMAGE = 'restok-frontend:$sha'
+          \$env:RESTOK_MARIADB_IMAGE = 'mariadb:11.4'
+          \$env:RESTOK_CADDY_IMAGE = 'caddy:2.10-alpine'
+          \$env:RESTOK_CLOUDFLARED_IMAGE = 'cloudflare/cloudflared:latest'
+
+          & '.\\deploy\\scripts\\deploy-restok.ps1' -Force
+          if (-not \$?) { throw 'Restok deploy script failed' }
           PWSH
 
           encoded="$(iconv -f UTF-8 -t UTF-16LE "$RUNNER_TEMP/restok-remote.ps1" | base64 -w0)"
           remote_command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded"
 
           set +e
-          output="$("${auth[@]}" -p "$port" -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SERVER_USER@$SERVER_HOST" "$remote_command" 2>&1)"
+          output="$("${ssh_cmd[@]}" -p "$port" "${common_ssh[@]}" "$remote" "$remote_command" 2>&1)"
           code=$?
           set -e
 
@@ -159,25 +274,30 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p deploy/status
-          available='${{ steps.ssh.outputs.available }}'
+
+          if [ '${{ steps.decision.outputs.needs_deploy }}' != 'true' ]; then
+            echo 'final=success' >> "$GITHUB_OUTPUT"
+            echo 'Restok is already at the latest SHA and public health is good.'
+            exit 0
+          fi
+
           exit_code='${{ steps.deploy.outputs.exit_code }}'
           [ -n "$exit_code" ] || exit_code=999
           final=failure
           public_url=''
           restok_sha=''
 
-          if [ "$available" != 'true' ]; then
-            final=skipped
-          elif [ "$exit_code" = '0' ]; then
+          if [ "$exit_code" = '0' ]; then
             public_url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' deploy/status/restok-ssh-output.txt | tail -n 1 || true)"
             restok_sha="$(sed -n 's/^.*\[restok\] source SHA: \([0-9a-f]\{40\}\).*$/\1/p' deploy/status/restok-ssh-output.txt | tail -n 1)"
-            if [ -n "$public_url" ] && [ -n "$restok_sha" ]; then
+            if [ -n "$public_url" ] && [ "$restok_sha" = '${{ steps.restok.outputs.sha }}' ]; then
               final=success
               cat > deploy/status/restok.txt <<EOF
           restok_sha=$restok_sha
           public_url=$public_url
           public_health=$public_url/api/auth/health
           local_url=http://127.0.0.1:9050
+          transport=prebuilt-image-bundle
           EOF
             fi
           fi
@@ -186,8 +306,10 @@ jobs:
           run_id=${{ github.run_id }}
           run_attempt=${{ github.run_attempt }}
           event=${{ github.event_name }}
-          ssh_available=$available
-          ssh_connection=$([ "$available" = 'true' ] && echo success || echo unavailable)
+          restok_sha=${{ steps.restok.outputs.sha }}
+          transport=prebuilt-image-bundle
+          ssh_available=${{ steps.ssh.outputs.available }}
+          ssh_connection=$([ '${{ steps.ssh.outputs.available }}' = 'true' ] && echo success || echo unavailable)
           remote_exit_code=$exit_code
           deployment=$final
           EOF
@@ -208,10 +330,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ '${{ steps.ssh.outputs.available }}' != 'true' ]; then
-            echo 'Server SSH configuration is unavailable.'
-            exit 1
-          fi
           if [ '${{ steps.record.outputs.final }}' != 'success' ]; then
             echo 'Restok deployment or health verification failed.'
             exit 1

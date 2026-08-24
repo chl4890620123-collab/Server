@@ -7,7 +7,6 @@ $ErrorActionPreference = "Stop"
 $ServerRoot = if ($env:GITHUB_WORKSPACE) { $env:GITHUB_WORKSPACE } else { (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path }
 $ComposeFile = Join-Path $ServerRoot "deploy\compose\restok.yml"
 $CaddyFile = Join-Path $ServerRoot "deploy\caddy\restok.Caddyfile"
-$RestokSourceRoot = "C:\home\server\sources\restok"
 $DataRoot = "D:\server-data\restok"
 $RuntimeRoot = Join-Path $DataRoot "runtime"
 $RuntimeEnv = Join-Path $RuntimeRoot ".env"
@@ -15,8 +14,6 @@ $DbDataRoot = Join-Path $DataRoot "mariadb"
 $UploadRoot = Join-Path $DataRoot "uploads"
 $BackupRoot = Join-Path $DataRoot "backups"
 $MarkerFile = Join-Path $RuntimeRoot "deployed.sha"
-$TunnelRuntimeRoot = Join-Path $RuntimeRoot "cloudflared"
-$CloudflaredBinary = Join-Path $TunnelRuntimeRoot "cloudflared"
 $StatusRoot = Join-Path $ServerRoot "deploy\status"
 $StatusFile = Join-Path $StatusRoot "restok.txt"
 
@@ -31,7 +28,9 @@ function Read-EnvFile([string]$Path) {
         $line = $_.Trim()
         if ($line -and -not $line.StartsWith("#")) {
             $parts = $line -split "=", 2
-            if ($parts.Count -eq 2) { $map[$parts[0].Trim()] = $parts[1] }
+            if ($parts.Count -eq 2) {
+                $map[$parts[0].Trim()] = $parts[1]
+            }
         }
     }
     return $map
@@ -53,99 +52,15 @@ function Get-RuntimeValue([string]$Key, [string]$DefaultValue) {
     return $DefaultValue
 }
 
-function Write-JsonUtf8NoBom([string]$Path, $Value) {
-    $json = $Value | ConvertTo-Json -Depth 32
-    $utf8NoBom = New-Object System.Text.UTF8Encoding
-    [System.IO.File]::WriteAllText($Path, $json, $utf8NoBom)
-}
-
-function Disable-GlobalDockerCredentialHelper {
-    $configPath = Join-Path $env:USERPROFILE ".docker\config.json"
-    if (-not (Test-Path $configPath)) {
-        return $null
-    }
-
-    $backupPath = Join-Path $RuntimeRoot ("docker-config-backup-" + [guid]::NewGuid().ToString("N") + ".json")
-    Copy-Item -Path $configPath -Destination $backupPath -Force
-
-    $config = Get-Content $configPath -Raw | ConvertFrom-Json
-    $changed = $false
-    if ($config.PSObject.Properties.Name -contains "credsStore") {
-        $config.PSObject.Properties.Remove("credsStore")
-        $changed = $true
-    }
-    if ($config.PSObject.Properties.Name -contains "credHelpers") {
-        $config.PSObject.Properties.Remove("credHelpers")
-        $changed = $true
-    }
-
-    if ($changed) {
-        Write-JsonUtf8NoBom $configPath $config
-        Write-Host "[restok] temporarily disabled Docker Desktop credential helper for non-interactive build"
-    }
-
-    return [pscustomobject]@{
-        ConfigPath = $configPath
-        BackupPath = $backupPath
-        Changed = $changed
-    }
-}
-
-function Restore-GlobalDockerCredentialHelper($State) {
-    if ($null -eq $State) { return }
-
-    if (Test-Path $State.BackupPath) {
-        if ($State.Changed) {
-            Copy-Item -Path $State.BackupPath -Destination $State.ConfigPath -Force
-            Write-Host "[restok] restored original Docker Desktop credential configuration"
-        }
-        Remove-Item -Path $State.BackupPath -Force -ErrorAction SilentlyContinue
-    }
-}
-
-function Initialize-IsolatedDockerCliConfig {
-    $sourceRoot = Join-Path $env:USERPROFILE ".docker"
-    $targetRoot = Join-Path $RuntimeRoot "docker-cli"
-
-    if (Test-Path $targetRoot) {
-        Remove-Item -Recurse -Force $targetRoot
-    }
-    New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
-
-    if (Test-Path $sourceRoot) {
-        Copy-Item -Path (Join-Path $sourceRoot "*") -Destination $targetRoot -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-    $configPath = Join-Path $targetRoot "config.json"
-    if (Test-Path $configPath) {
-        $config = Get-Content $configPath -Raw | ConvertFrom-Json
-        if ($config.PSObject.Properties.Name -contains "credsStore") {
-            $config.PSObject.Properties.Remove("credsStore")
-        }
-        if ($config.PSObject.Properties.Name -contains "credHelpers") {
-            $config.PSObject.Properties.Remove("credHelpers")
-        }
-        Write-JsonUtf8NoBom $configPath $config
-    } else {
-        '{"auths":{}}' | Set-Content -Path $configPath -Encoding ascii
-    }
-
-    $env:DOCKER_CONFIG = $targetRoot
-    docker version *> $null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Isolated Docker CLI configuration cannot reach Docker Desktop."
-    }
-
-    Write-Host "[restok] using isolated Docker CLI config without desktop credential helper"
-}
-
 function Get-TunnelUrl {
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "SilentlyContinue"
     try {
         $logs = (cmd.exe /d /s /c "docker logs restok-public-tunnel 2>&1" | Out-String)
         $matches = [regex]::Matches($logs, 'https://[a-z0-9-]+\.trycloudflare\.com')
-        if ($matches.Count -gt 0) { return $matches[$matches.Count - 1].Value }
+        if ($matches.Count -gt 0) {
+            return $matches[$matches.Count - 1].Value
+        }
         return $null
     } catch {
         return $null
@@ -163,7 +78,9 @@ function Test-HealthyExistingDeployment([string]$ExpectedSha) {
     try {
         $health = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$localPort/api/auth/health" -TimeoutSec 5
         $root = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$localPort/" -TimeoutSec 5
-        if ($health.StatusCode -ne 200 -or $root.StatusCode -ne 200) { return $false }
+        if ($health.StatusCode -ne 200 -or $root.StatusCode -ne 200) {
+            return $false
+        }
     } catch {
         return $false
     }
@@ -201,7 +118,26 @@ if (-not (Test-Path "D:\")) { throw "D drive is required for Restok runtime data
 if (-not (Test-Path $ComposeFile)) { throw "Restok compose file is missing: $ComposeFile" }
 if (-not (Test-Path $CaddyFile)) { throw "Restok Caddyfile is missing: $CaddyFile" }
 
-@($RuntimeRoot, $DbDataRoot, $UploadRoot, $BackupRoot, $TunnelRuntimeRoot, $StatusRoot, (Split-Path $RestokSourceRoot -Parent)) | ForEach-Object {
+$RestokSha = $env:RESTOK_DEPLOY_SHA
+if ([string]::IsNullOrWhiteSpace($RestokSha) -or $RestokSha -notmatch '^[0-9a-f]{40}$') {
+    throw "RESTOK_DEPLOY_SHA must contain the exact 40-character Restok commit SHA."
+}
+
+$requiredImages = @{
+    RESTOK_AI_IMAGE = $env:RESTOK_AI_IMAGE
+    RESTOK_BACKEND_IMAGE = $env:RESTOK_BACKEND_IMAGE
+    RESTOK_FRONTEND_IMAGE = $env:RESTOK_FRONTEND_IMAGE
+    RESTOK_MARIADB_IMAGE = $env:RESTOK_MARIADB_IMAGE
+    RESTOK_CADDY_IMAGE = $env:RESTOK_CADDY_IMAGE
+    RESTOK_CLOUDFLARED_IMAGE = $env:RESTOK_CLOUDFLARED_IMAGE
+}
+foreach ($entry in $requiredImages.GetEnumerator()) {
+    if ([string]::IsNullOrWhiteSpace($entry.Value)) {
+        throw "$($entry.Key) is required for a prebuilt Restok deployment."
+    }
+}
+
+@($RuntimeRoot, $DbDataRoot, $UploadRoot, $BackupRoot, $StatusRoot) | ForEach-Object {
     New-Item -ItemType Directory -Force -Path $_ | Out-Null
 }
 
@@ -223,6 +159,7 @@ GOOGLE_CLIENT_ID=
 GOOGLE_CLIENT_SECRET=
 APP_CORS_ALLOWED_ORIGINS=http://localhost:9050
 DB_CHARSET_MIGRATION_ENABLED=false
+DB_CHARSET_MIGRATION_LOCK_WAIT_SECONDS=10
 "@ | Set-Content -Path $RuntimeEnv -Encoding ascii
     Write-Host "[restok] created server-local runtime env"
 }
@@ -239,6 +176,7 @@ Add-EnvSetting $RuntimeEnv $envMap "AI_MAX_IMAGE_BYTES" "10485760"
 Add-EnvSetting $RuntimeEnv $envMap "REACT_APP_GOOGLE_OAUTH_ENABLED" "false"
 Add-EnvSetting $RuntimeEnv $envMap "APP_CORS_ALLOWED_ORIGINS" "http://localhost:9050"
 Add-EnvSetting $RuntimeEnv $envMap "DB_CHARSET_MIGRATION_ENABLED" "false"
+Add-EnvSetting $RuntimeEnv $envMap "DB_CHARSET_MIGRATION_LOCK_WAIT_SECONDS" "10"
 
 $missingDbPassword = -not $envMap.ContainsKey("DB_PASSWORD") -or [string]::IsNullOrWhiteSpace($envMap["DB_PASSWORD"])
 $missingRootPassword = -not $envMap.ContainsKey("DB_ROOT_PASSWORD") -or [string]::IsNullOrWhiteSpace($envMap["DB_ROOT_PASSWORD"])
@@ -265,44 +203,17 @@ if ($listener -and -not $existingCaddy) {
     throw "Restok local port $localPort is already in use by another service."
 }
 
-if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary -ErrorAction SilentlyContinue).Length -le 1MB) {
-    Write-Host "[restok] downloading Cloudflared runtime"
-    $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64"
-    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-    if ($curl) {
-        & $curl.Source -fL --retry 3 --connect-timeout 20 --output $CloudflaredBinary $url
-        if ($LASTEXITCODE -ne 0) { throw "Cloudflared binary download failed." }
-    } else {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $CloudflaredBinary -TimeoutSec 120
-    }
-}
-if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary).Length -le 1MB) {
-    throw "Cloudflared binary is missing or invalid."
-}
-
-if (-not (Test-Path (Join-Path $RestokSourceRoot ".git"))) {
-    if (Test-Path $RestokSourceRoot) { Remove-Item -Recurse -Force $RestokSourceRoot }
-    git clone https://github.com/chl4890620123-collab/Restok-Rangchain.git $RestokSourceRoot
-    if ($LASTEXITCODE -ne 0) { throw "Failed to clone Restok repository." }
-}
-
-Write-Host "[restok] checking latest application source"
-git -C $RestokSourceRoot fetch --prune origin main
-if ($LASTEXITCODE -ne 0) { throw "Failed to fetch Restok main." }
-$latestSha = (git -C $RestokSourceRoot rev-parse origin/main | Out-String).Trim()
-if (-not $Force -and $latestSha -and (Test-HealthyExistingDeployment $latestSha)) {
+if (-not $Force -and (Test-HealthyExistingDeployment $RestokSha)) {
     return
 }
 
-git -C $RestokSourceRoot checkout -B main origin/main
-if ($LASTEXITCODE -ne 0) { throw "Failed to checkout Restok main." }
-git -C $RestokSourceRoot reset --hard origin/main
-if ($LASTEXITCODE -ne 0) { throw "Failed to reset Restok source." }
-git -C $RestokSourceRoot clean -fd
-if ($LASTEXITCODE -ne 0) { throw "Failed to clean Restok source." }
-$RestokSha = (git -C $RestokSourceRoot rev-parse HEAD | Out-String).Trim()
-if (-not $RestokSha) { throw "Could not resolve Restok source SHA." }
+Write-Host "[restok] verifying preloaded Docker images"
+foreach ($entry in $requiredImages.GetEnumerator()) {
+    docker image inspect $entry.Value *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Preloaded image is missing: $($entry.Value) ($($entry.Key))"
+    }
+}
 
 $existingDb = docker ps --format "{{.Names}}" | Where-Object { $_ -eq "restok-db" }
 if ($existingDb) {
@@ -315,39 +226,30 @@ if ($existingDb) {
     docker exec restok-db rm -f /tmp/restok_backup.sql | Out-Null
 }
 Get-ChildItem $BackupRoot -Filter "restok_*.sql" -File -ErrorAction SilentlyContinue |
-    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-28) } | Remove-Item -Force
+    Where-Object { $_.LastWriteTime -lt (Get-Date).AddDays(-28) } |
+    Remove-Item -Force
 
-$env:RESTOK_SOURCE_DIR = ($RestokSourceRoot -replace "\\", "/")
 $env:RESTOK_DB_DATA_DIR = ($DbDataRoot -replace "\\", "/")
 $env:RESTOK_UPLOAD_DATA_DIR = ($UploadRoot -replace "\\", "/")
 $env:RESTOK_CADDYFILE = ($CaddyFile -replace "\\", "/")
-$env:RESTOK_CLOUDFLARED_BINARY = ($CloudflaredBinary -replace "\\", "/")
 
-$dockerCredentialState = Disable-GlobalDockerCredentialHelper
-try {
-    Initialize-IsolatedDockerCliConfig
+Write-Host "[restok] validating production compose"
+docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile config *> $null
+if ($LASTEXITCODE -ne 0) { throw "Restok docker compose configuration is invalid." }
 
-    Write-Host "[restok] validating production compose"
-    docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile config *> $null
-    if ($LASTEXITCODE -ne 0) { throw "Restok docker compose configuration is invalid." }
-
-    Write-Host "[restok] building application images before replacing running containers"
-    docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile build
-    if ($LASTEXITCODE -ne 0) { throw "Restok image build failed; existing containers were left running." }
-
-    Write-Host "[restok] starting production containers"
-    docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile up -d --remove-orphans
-    if ($LASTEXITCODE -ne 0) { throw "Restok docker compose deployment failed." }
-} finally {
-    Restore-GlobalDockerCredentialHelper $dockerCredentialState
-}
+Write-Host "[restok] starting preloaded production images without registry pulls"
+docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile up -d --remove-orphans --pull never
+if ($LASTEXITCODE -ne 0) { throw "Restok docker compose deployment failed." }
 
 $localHealth = "http://127.0.0.1:$localPort/api/auth/health"
 $localReady = $false
 for ($attempt = 1; $attempt -le 60; $attempt++) {
     try {
         $response = Invoke-WebRequest -UseBasicParsing -Uri $localHealth -TimeoutSec 5
-        if ($response.StatusCode -eq 200) { $localReady = $true; break }
+        if ($response.StatusCode -eq 200) {
+            $localReady = $true
+            break
+        }
     } catch {}
     Start-Sleep -Seconds 5
 }
@@ -370,7 +272,10 @@ $publicReady = $false
 for ($attempt = 1; $attempt -le 24; $attempt++) {
     try {
         $response = Invoke-WebRequest -UseBasicParsing -Uri $publicHealth -TimeoutSec 10
-        if ($response.StatusCode -eq 200) { $publicReady = $true; break }
+        if ($response.StatusCode -eq 200) {
+            $publicReady = $true
+            break
+        }
     } catch {}
     Start-Sleep -Seconds 5
 }
