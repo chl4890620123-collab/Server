@@ -17,6 +17,7 @@ on:
       - "deploy/runtime/restok.env.example"
       - "deploy/scripts/deploy-restok.ps1"
       - "deploy/scripts/check-restok-legacy-data.ps1"
+      - "deploy/status/restok-deploy-trigger.txt"
   schedule:
     - cron: "*/15 * * * *"
 
@@ -24,8 +25,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: server-restok-production
-  cancel-in-progress: false
+  group: server-restok-production-ssh
+  cancel-in-progress: true
 
 jobs:
   deploy:
