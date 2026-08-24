@@ -9,41 +9,94 @@
   = 앱 코드 + Dockerfile + 앱 자체 CI
 
 Server 저장소
-  = Self-hosted Runner + 운영 Compose + Caddy + 배포 스크립트
+  = 운영 Compose + Caddy + 배포/검증 스크립트 + GitHub Actions
 
 D:\server-data
-  = 운영 DB + runtime env + 업로드 + 백업
+  = 운영 DB + runtime env + 업로드/영상 + 백업
 ```
 
-외부 SSH 배포를 기본 경로로 사용하지 않습니다. GitHub Actions의 Windows self-hosted runner가 미니PC에서 직접 Docker 명령을 실행합니다.
+현재 운영 배포는 GitHub-hosted Ubuntu runner가 기존 서버 SSH 설정으로 Windows 미니PC에 접속하는 구조입니다. Restok과 Aitm은 Windows의 Docker Desktop credential helper에 빌드가 의존하지 않도록 GitHub runner에서 애플리케이션 이미지를 먼저 빌드하고 Docker image bundle로 전송합니다. Maple은 소스 bind mount 기반이라 서버에서 별도 애플리케이션 이미지 빌드를 하지 않습니다.
 
-## Infrastructure smoke test
+## 서비스 분리
 
-기존 smoke test는 그대로 유지합니다.
+| 서비스 | 로컬 Caddy | DB 데이터 | 추가 영속 데이터 |
+| --- | --- | --- | --- |
+| Maple | `127.0.0.1:9040` | `D:\server-data\maple\mariadb` | runtime / backups |
+| Restok | `127.0.0.1:9050` | `D:\server-data\restok\mariadb` | uploads / runtime / backups |
+| Aitm | `127.0.0.1:9060` | `D:\server-data\aitm\mariadb` | videos / runtime / backups |
 
-```text
-GitHub Actions
-  -> Self-hosted Windows Runner
-  -> Docker Compose
-  -> Nginx 테스트 화면
-  -> HTTP 200
-```
+앱별 컨테이너 이름과 Docker network도 각각 `maple-*`, `restok-*`, `aitm-*`로 분리합니다. MariaDB 포트는 호스트에 publish하지 않습니다.
 
-기본 포트는 `9010`입니다.
-
-## Restok 배포
-
-Restok은 `chl4890620123-collab/Restok-Rangchain`의 최신 `main`을 Server가 직접 가져와 배포합니다. MOVE-AI나 다른 프로젝트의 Nginx/네트워크/포트에 의존하지 않습니다.
+## 공통 배포 흐름
 
 ```text
-Restok-Rangchain main
-   -> Server self-hosted runner
-   -> Restok Docker image build
-   -> MariaDB 11.4
-   -> Spring Boot + FastAPI + React/Nginx
-   -> Caddy internal reverse proxy
+App main
+   -> 앱 자체 CI
+   -> Server 배포 workflow
+   -> 배포 전 DB 백업(기존 DB 실행 중일 때)
+   -> Compose 검증
+   -> 앱별 localhost Caddy
    -> Cloudflare Quick Tunnel
-   -> public HTTPS preview URL
+   -> local/public health + 실제 화면 검증
+   -> deploy/status/<app>.txt 기록
+```
+
+Quick Tunnel은 검수용 임시 HTTPS 주소입니다. 컨테이너/터널 재생성 시 URL이 바뀔 수 있으며, 고정 Gabia 도메인을 연결할 때는 앱 내부 포트를 외부에 직접 노출하지 않고 Server의 동일한 Caddy upstream을 사용합니다.
+
+## Maple
+
+Maple은 `chl4890620123-collab/maple` 최신 `main`을 서버의 소스 디렉터리에 동기화하고 read-only bind mount로 실행합니다.
+
+```text
+Maple main
+   -> Server deploy-maple workflow
+   -> MariaDB 11.4
+   -> FastAPI
+   -> Caddy
+   -> Quick Tunnel
+```
+
+운영 파일:
+
+```text
+deploy/compose/maple.yml
+deploy/caddy/maple.Caddyfile
+deploy/scripts/run-maple-deploy.ps1
+deploy/scripts/deploy-maple.ps1
+deploy/scripts/verify-maple-rules.py
+.github/workflows/deploy-maple-ssh.yml
+```
+
+서버 데이터:
+
+```text
+D:\server-data\maple\runtime\.env
+D:\server-data\maple\mariadb
+D:\server-data\maple\backups
+```
+
+배포 성공 조건에는 `/api/health`, 화면, 마이스터빌 5개 카테고리, 카탈로그/재료 데이터, 고정 상점가, 길드 할인 ON/OFF 계산 규칙까지 포함됩니다.
+
+성공 상태:
+
+```text
+deploy/status/maple.txt
+deploy/status/transport.txt
+```
+
+## Restok
+
+Restok은 `chl4890620123-collab/Restok-Rangchain` 최신 `main`을 GitHub runner에서 빌드합니다.
+
+```text
+Restok main
+   -> GitHub runner: AI / Spring Boot / React 이미지 빌드
+   -> docker save image bundle
+   -> SSH/SCP -> Windows mini PC
+   -> docker load
+   -> MariaDB 11.4 + prebuilt app images
+   -> Caddy
+   -> Quick Tunnel
 ```
 
 운영 파일:
@@ -56,7 +109,7 @@ deploy/scripts/deploy-restok.ps1
 .github/workflows/deploy-restok.yml
 ```
 
-### Restok 서버 전용 데이터
+서버 데이터:
 
 ```text
 D:\server-data\restok\runtime\.env
@@ -65,133 +118,69 @@ D:\server-data\restok\uploads
 D:\server-data\restok\backups
 ```
 
-첫 Server-managed 배포에서 runtime `.env`가 없으면 DB 비밀번호, DB root 비밀번호, JWT secret을 서버에서 생성합니다. Gemini와 Google OAuth는 선택 설정이며 실제 키는 Git에 저장하지 않습니다.
+기존 Restok DB Docker volume이 감지되는데 새 bind-mount DB 디렉터리가 비어 있으면 배포를 중단합니다. 이전 데이터를 자동으로 버리거나 빈 DB로 대체하지 않습니다. 앱 시작 시 charset 변환은 운영 기본값 `false`입니다.
 
-기존 Restok DB Docker volume이 감지되는데 새 `D:\server-data\restok\mariadb`가 비어 있으면 배포를 중단합니다. 이전 데이터를 자동으로 버리거나 빈 DB로 대체하지 않습니다.
-
-### Restok 로컬 검증 주소
-
-Restok Caddy는 호스트 80/443을 점유하지 않습니다.
-
-```text
-http://127.0.0.1:9050
-http://127.0.0.1:9050/api/auth/health
-```
-
-9050이 다른 호스트 프로세스에 사용 중이면 기존 서비스를 종료하지 않고 배포를 중단합니다.
-
-### Restok 공개 검수 URL
-
-별도 고정 도메인을 건드리지 않고 Cloudflare Quick Tunnel로 임시 HTTPS URL을 만듭니다.
-
-```text
-https://<random>.trycloudflare.com
-```
-
-로컬 frontend와 `/api/auth/health`, 공개 frontend와 공개 `/api/auth/health`가 모두 HTTP 200이어야 배포 성공으로 기록합니다.
-
-성공 결과:
+성공 상태:
 
 ```text
 deploy/status/restok.txt
+deploy/status/restok-transport.txt
 ```
 
-### Restok 자동 배포
+## Aitm
 
-`.github/workflows/deploy-restok.yml`은 다음 경우 실행됩니다.
-
-- Restok 운영 파일이 Server `main`에 변경된 경우
-- 수동 `workflow_dispatch`
-- 15분 주기 동기화
-
-Restok `main`의 SHA가 기존 배포 SHA와 같고 로컬/공개 health가 모두 정상인 경우에는 다시 빌드하지 않습니다.
-
-새 배포 전에 기존 `restok-db`가 실행 중이면 `mariadb-dump` 백업을 먼저 만듭니다.
+Aitm은 `chl4890620123-collab/Aitm` 최신 `main`을 Restok과 같은 사전 빌드 방식으로 배포합니다.
 
 ```text
-D:\server-data\restok\backups\restok_YYYYMMDD_HHMMSS.sql
+Aitm main
+   -> GitHub runner: Pose AI / Spring Boot / Frontend 이미지 빌드
+   -> docker save image bundle
+   -> SSH/SCP -> Windows mini PC
+   -> docker load
+   -> MariaDB 10.11 + prebuilt app images
+   -> Caddy
+   -> Quick Tunnel
 ```
 
-이미지 빌드를 먼저 성공시킨 뒤 컨테이너를 갱신하므로 빌드 실패만으로 실행 중인 Restok 컨테이너를 교체하지 않습니다.
-
-## Maple 배포
-
-Maple은 Server가 최신 `chl4890620123-collab/maple` main을 직접 가져와 배포합니다.
+운영 파일:
 
 ```text
-Maple main
-   -> Server self-hosted runner
-   -> Maple Docker build
-   -> MariaDB 11.4
-   -> Caddy internal reverse proxy
-   -> Cloudflare Quick Tunnel
-   -> public HTTPS preview URL
+deploy/compose/aitm.yml
+deploy/caddy/aitm.Caddyfile
+deploy/runtime/aitm.env.example
+deploy/scripts/deploy-aitm.ps1
+.github/workflows/deploy-aitm.yml
 ```
 
-운영 Compose:
+서버 데이터:
 
 ```text
-deploy/compose/maple.yml
+D:\server-data\aitm\runtime\.env
+D:\server-data\aitm\mariadb
+D:\server-data\aitm\videos
+D:\server-data\aitm\backups
 ```
 
-배포 스크립트:
+Aitm 프론트의 `/api`와 `/media`는 Compose 서비스명 `backend`로 프록시합니다. 운영에서는 `DB_CHARSET_MIGRATION_ENABLED=false`를 기본값으로 사용해 앱 부팅 중 `ALTER DATABASE/TABLE`을 수행하지 않습니다. 필요할 때만 별도 유지보수 창에서 명시적으로 활성화합니다.
+
+성공 상태:
 
 ```text
-deploy/scripts/deploy-maple.ps1
+deploy/status/aitm.txt
+deploy/status/aitm-transport.txt
 ```
-
-Caddy 설정:
-
-```text
-deploy/caddy/maple.Caddyfile
-```
-
-### 서버 전용 데이터
-
-GitHub 저장소에는 실제 운영 비밀번호를 저장하지 않습니다.
-
-```text
-D:\server-data\maple\runtime\.env
-D:\server-data\maple\mariadb
-D:\server-data\maple\backups
-```
-
-첫 배포 때 runtime `.env`가 없으면 긴 랜덤 `ADMIN_TOKEN`, DB 비밀번호, DB root 비밀번호를 서버에서 자동 생성합니다.
-
-MariaDB의 `3306` 포트는 호스트나 인터넷에 publish하지 않습니다.
-
-### 로컬 검증 주소
-
-Caddy는 기존 80/443 서비스와 충돌하지 않도록 localhost 전용 포트를 사용합니다.
-
-```text
-http://127.0.0.1:9040
-```
-
-포트가 이미 다른 서비스에 사용 중이면 배포를 중단합니다. 기존 서비스 포트를 강제로 종료하거나 변경하지 않습니다.
-
-### 공개 검수 URL
-
-별도 도메인 정보가 없는 현재 단계에서는 Cloudflare Quick Tunnel을 사용해 임시 HTTPS URL을 자동 발급합니다.
-
-```text
-https://<random>.trycloudflare.com
-```
-
-배포 스크립트는 공개 `/api/health`와 실제 Maple 화면의 HTTP 200을 모두 확인한 뒤에만 성공 처리합니다.
-
-성공한 URL은 다음 파일에 기록됩니다.
-
-```text
-deploy/status/maple.txt
-```
-
-이 Quick Tunnel은 검수/프리뷰용이며 컨테이너를 새로 만들면 URL이 변경될 수 있습니다. 실제 고정 Gabia 도메인이 Server에 등록되면 동일한 Caddy upstream을 고정 도메인으로 교체하면 됩니다.
 
 ## 데이터 보호 공통 원칙
 
-- 운영 DB/runtime secret은 앱 저장소에 넣지 않습니다.
+- 운영 DB/runtime secret은 Git 저장소에 넣지 않습니다.
 - 데이터가 있는 DB를 임의로 초기화하지 않습니다.
-- 백업 실패 시 데이터 보호가 우선이며 배포를 중단합니다.
-- 전역 `docker system prune`, `docker volume prune`을 배포 스크립트에서 실행하지 않습니다.
-- 앱별 컨테이너 이름, 네트워크, localhost 포트를 분리해 한 앱 삭제가 다른 앱의 진입 경로를 끊지 않도록 합니다.
+- 기존 DB 컨테이너가 실행 중이면 새 배포 전에 `mariadb-dump --single-transaction` 백업을 만듭니다.
+- 백업 실패 시 데이터 보호를 우선해 배포를 중단합니다.
+- 전역 `docker system prune`, `docker volume prune`을 실행하지 않습니다.
+- 앱별 DB 디렉터리, 네트워크, 컨테이너 이름, localhost 포트를 분리합니다.
+- raw SSH/컨테이너 진단 로그를 Git에 커밋하지 않습니다. 수동 probe 로그는 Actions artifact로만 보관하며 retention은 3일입니다.
+- 앱 시작 시 대규모 DB charset 변환은 운영 기본값으로 비활성화합니다.
+
+## 진단
+
+Maple/Restok probe workflow는 상세 컨테이너 상태와 로그를 저장소에 남기지 않고 Actions artifact로만 업로드합니다. 상태 파일에는 배포 SHA, 공개 검수 URL, 성공/실패 같은 최소 정보만 기록합니다.
