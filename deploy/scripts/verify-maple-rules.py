@@ -18,6 +18,13 @@ def get_json(path: str):
         return json.load(response)
 
 
+def get_text(path: str) -> str:
+    with urllib.request.urlopen(BASE_URL + path, timeout=10) as response:
+        if response.status != 200:
+            raise RuntimeError(f"GET {path} returned {response.status}")
+        return response.read().decode("utf-8")
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
@@ -66,9 +73,34 @@ def main() -> int:
     meta = get_json("/api/meister/meta")
     require(int(meta.get("total_recipe_count", 0)) >= 50, "Meisterville catalog is unexpectedly small")
 
+    calculations = get_json("/api/meister/calculations?category_key=accessory&fee_rate=0.05")
+    require(isinstance(calculations, list) and calculations, "accessory calculation results are missing")
+    require(any(int(row.get("item_level") or 0) > 0 for row in calculations), "item-level metadata is missing from calculation API")
+    for row in calculations[:20]:
+        require(int(row.get("input_type_count") or 0) >= 1, "recipe input type count is missing")
+        require(float(row.get("input_total_quantity") or 0) > 0, "recipe total material quantity is missing")
+        require(int(row.get("output_type_count") or 0) >= 1, "recipe output type count is missing")
+        require(float(row.get("output_expected_quantity") or 0) > 0, "recipe expected output quantity is missing")
+        require(bool(row.get("source_label")), "recipe source label is missing")
+
+    html = get_text("/")
+    require('id="sortMode"' in html, "profit ranking sort control is missing from production HTML")
+    require('id="rankLimit"' in html, "Top-N ranking control is missing from production HTML")
+    require('id="favoritesOnly"' in html, "favorites-only control is missing from production HTML")
+    require('/features.js' in html and '/features.css' in html, "feature assets are missing from production HTML")
+
+    feature_js = get_text("/features.js")
+    require("FAVORITES_KEY" in feature_js, "favorites persistence code is missing")
+    require("renderCalculationsEnhanced" in feature_js, "enhanced ranking renderer is missing")
+    require("row.item_level" in feature_js, "item-level display code is missing")
+    feature_css = get_text("/features.css")
+    require(".favorite-button" in feature_css, "favorite UI styles are missing")
+    require(".recipe-table" in feature_css, "recipe detail table styles are missing")
+
     print(
-        "Maple rules verified: fees=5/3, guild=4, pc-craft-max=10, "
-        f"fixed-shop={len(fixed)}, recipes={meta['total_recipe_count']}"
+        "Maple rules and UI verified: fees=5/3, guild=4, pc-craft-max=10, "
+        f"fixed-shop={len(fixed)}, recipes={meta['total_recipe_count']}, "
+        f"accessory-details={len(calculations)}, favorites-ui=ok, ranking-ui=ok"
     )
     return 0
 
