@@ -78,7 +78,7 @@ jobs:
           fi
           echo "available=$available" >> "$GITHUB_OUTPUT"
 
-      - name: Record deployment start
+      - name: Record deployment start locally
         shell: bash
         run: |
           set -euo pipefail
@@ -95,14 +95,6 @@ jobs:
           remote_exit_code=pending
           deployment=running
           EOF
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/status/aitm-transport.txt
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: mark Aitm deployment running"
-            git pull --rebase origin main
-            git push origin HEAD:main
-          fi
 
       - name: Build Aitm images on GitHub runner
         id: build
@@ -286,14 +278,37 @@ jobs:
           EOF
           echo "final=$final" >> "$GITHUB_OUTPUT"
 
+          tmpdir="$(mktemp -d)"
+          cp deploy/status/aitm-transport.txt "$tmpdir/aitm-transport.txt"
+          if [ -f deploy/status/aitm.txt ]; then cp deploy/status/aitm.txt "$tmpdir/aitm.txt"; fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/status/aitm-transport.txt
-          if [ -f deploy/status/aitm.txt ]; then git add deploy/status/aitm.txt; fi
-          if ! git diff --cached --quiet; then
+          published=false
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            mkdir -p deploy/status
+            cp "$tmpdir/aitm-transport.txt" deploy/status/aitm-transport.txt
+            if [ -f "$tmpdir/aitm.txt" ]; then cp "$tmpdir/aitm.txt" deploy/status/aitm.txt; fi
+            git add deploy/status/aitm-transport.txt
+            if [ -f "$tmpdir/aitm.txt" ]; then git add deploy/status/aitm.txt; fi
+            if git diff --cached --quiet; then
+              published=true
+              break
+            fi
             git commit -m "chore: record Aitm deployment result"
-            git pull --rebase origin main
-            git push origin HEAD:main
+            if git push origin HEAD:main; then
+              published=true
+              break
+            fi
+            echo "Aitm status push raced with another deployment; retrying ($attempt/5)."
+            sleep $((attempt * 2))
+          done
+          rm -rf "$tmpdir"
+          if [ "$published" != 'true' ]; then
+            echo 'Failed to publish Aitm deployment status after retries.'
+            exit 1
           fi
 
       - name: Enforce deployment result
