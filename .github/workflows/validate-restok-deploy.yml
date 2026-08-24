@@ -1,0 +1,74 @@
+name: Validate Restok deployment
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/deploy-restok.yml"
+      - ".github/workflows/validate-restok-deploy.yml"
+      - "deploy/compose/restok.yml"
+      - "deploy/caddy/restok.Caddyfile"
+      - "deploy/runtime/restok.env.example"
+      - "deploy/scripts/deploy-restok.ps1"
+      - "deploy/scripts/check-restok-legacy-data.ps1"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/validate-restok-deploy.yml"
+      - "deploy/compose/restok.yml"
+      - "deploy/caddy/restok.Caddyfile"
+      - "deploy/scripts/deploy-restok.ps1"
+      - "deploy/scripts/check-restok-legacy-data.ps1"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Validate PowerShell scripts parse
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(
+            'deploy/scripts/deploy-restok.ps1',
+            'deploy/scripts/check-restok-legacy-data.ps1'
+          )
+          foreach ($file in $files) {
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.Message }
+              throw "PowerShell syntax validation failed: $file"
+            }
+            Write-Host "PowerShell syntax OK: $file"
+          }
+
+      - name: Validate Restok production Compose
+        env:
+          RESTOK_SOURCE_DIR: /tmp/restok-source
+          RESTOK_DB_DATA_DIR: /tmp/restok-db
+          RESTOK_UPLOAD_DATA_DIR: /tmp/restok-uploads
+          RESTOK_CADDYFILE: /tmp/restok.Caddyfile
+          RESTOK_CLOUDFLARED_BINARY: /tmp/cloudflared
+          RESTOK_LOCAL_PORT: "9050"
+          DB_NAME: restock_db
+          DB_USER: restok
+          DB_PASSWORD: ci-db-password
+          DB_ROOT_PASSWORD: ci-root-password
+          JWT_SECRET: ci-jwt-secret-that-is-at-least-32-bytes-long
+          GEMINI_API_KEY: ""
+        run: docker compose -p restok-validation -f deploy/compose/restok.yml config >/dev/null
+
+      - name: Validate Caddyfile
+        run: |
+          docker run --rm \
+            -v "$PWD/deploy/caddy/restok.Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
