@@ -75,7 +75,9 @@ function Initialize-IsolatedDockerCliConfig {
         if ($config.PSObject.Properties.Name -contains "credHelpers") {
             $config.PSObject.Properties.Remove("credHelpers")
         }
-        $config | ConvertTo-Json -Depth 32 | Set-Content -Path $configPath -Encoding utf8
+        $json = $config | ConvertTo-Json -Depth 32
+        $utf8NoBom = New-Object System.Text.UTF8Encoding
+        [System.IO.File]::WriteAllText($configPath, $json, $utf8NoBom)
     } else {
         '{"auths":{}}' | Set-Content -Path $configPath -Encoding ascii
     }
