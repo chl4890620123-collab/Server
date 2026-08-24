@@ -1,5 +1,6 @@
 param(
-    [switch]$Force
+    [switch]$Force,
+    [switch]$Prebuilt
 )
 
 $ErrorActionPreference = "Stop"
@@ -137,6 +138,23 @@ function Initialize-IsolatedDockerCliConfig {
     }
 
     Write-Host "[restok] using isolated Docker CLI config without desktop credential helper"
+}
+
+function Assert-PrebuiltImages {
+    $requiredImages = @(
+        "restok-production-ai:latest",
+        "restok-production-backend:latest",
+        "restok-production-frontend:latest",
+        "mariadb:11.4",
+        "caddy:2.10-alpine"
+    )
+    foreach ($image in $requiredImages) {
+        docker image inspect $image *> $null
+        if ($LASTEXITCODE -ne 0) {
+            throw "Required prebuilt image is missing: $image"
+        }
+    }
+    Write-Host "[restok] verified prebuilt application and runtime images"
 }
 
 function Get-TunnelUrl {
@@ -323,23 +341,35 @@ $env:RESTOK_UPLOAD_DATA_DIR = ($UploadRoot -replace "\\", "/")
 $env:RESTOK_CADDYFILE = ($CaddyFile -replace "\\", "/")
 $env:RESTOK_CLOUDFLARED_BINARY = ($CloudflaredBinary -replace "\\", "/")
 
-$dockerCredentialState = Disable-GlobalDockerCredentialHelper
-try {
-    Initialize-IsolatedDockerCliConfig
-
+if ($Prebuilt) {
+    Write-Host "[restok] using prebuilt images loaded by GitHub Actions"
+    Assert-PrebuiltImages
     Write-Host "[restok] validating production compose"
     docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile config *> $null
     if ($LASTEXITCODE -ne 0) { throw "Restok docker compose configuration is invalid." }
 
-    Write-Host "[restok] building application images before replacing running containers"
-    docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile build
-    if ($LASTEXITCODE -ne 0) { throw "Restok image build failed; existing containers were left running." }
+    Write-Host "[restok] starting production containers without registry access"
+    docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile up -d --no-build --pull never --remove-orphans
+    if ($LASTEXITCODE -ne 0) { throw "Restok prebuilt docker compose deployment failed." }
+} else {
+    $dockerCredentialState = Disable-GlobalDockerCredentialHelper
+    try {
+        Initialize-IsolatedDockerCliConfig
 
-    Write-Host "[restok] starting production containers"
-    docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile up -d --remove-orphans
-    if ($LASTEXITCODE -ne 0) { throw "Restok docker compose deployment failed." }
-} finally {
-    Restore-GlobalDockerCredentialHelper $dockerCredentialState
+        Write-Host "[restok] validating production compose"
+        docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile config *> $null
+        if ($LASTEXITCODE -ne 0) { throw "Restok docker compose configuration is invalid." }
+
+        Write-Host "[restok] building application images before replacing running containers"
+        docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile build
+        if ($LASTEXITCODE -ne 0) { throw "Restok image build failed; existing containers were left running." }
+
+        Write-Host "[restok] starting production containers"
+        docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile up -d --remove-orphans
+        if ($LASTEXITCODE -ne 0) { throw "Restok docker compose deployment failed." }
+    } finally {
+        Restore-GlobalDockerCredentialHelper $dockerCredentialState
+    }
 }
 
 $localHealth = "http://127.0.0.1:$localPort/api/auth/health"
