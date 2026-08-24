@@ -53,6 +53,56 @@ function Get-RuntimeValue([string]$Key, [string]$DefaultValue) {
     return $DefaultValue
 }
 
+function Write-JsonUtf8NoBom([string]$Path, $Value) {
+    $json = $Value | ConvertTo-Json -Depth 32
+    $utf8NoBom = New-Object System.Text.UTF8Encoding
+    [System.IO.File]::WriteAllText($Path, $json, $utf8NoBom)
+}
+
+function Disable-GlobalDockerCredentialHelper {
+    $configPath = Join-Path $env:USERPROFILE ".docker\config.json"
+    if (-not (Test-Path $configPath)) {
+        return $null
+    }
+
+    $backupPath = Join-Path $RuntimeRoot ("docker-config-backup-" + [guid]::NewGuid().ToString("N") + ".json")
+    Copy-Item -Path $configPath -Destination $backupPath -Force
+
+    $config = Get-Content $configPath -Raw | ConvertFrom-Json
+    $changed = $false
+    if ($config.PSObject.Properties.Name -contains "credsStore") {
+        $config.PSObject.Properties.Remove("credsStore")
+        $changed = $true
+    }
+    if ($config.PSObject.Properties.Name -contains "credHelpers") {
+        $config.PSObject.Properties.Remove("credHelpers")
+        $changed = $true
+    }
+
+    if ($changed) {
+        Write-JsonUtf8NoBom $configPath $config
+        Write-Host "[restok] temporarily disabled Docker Desktop credential helper for non-interactive build"
+    }
+
+    return [pscustomobject]@{
+        ConfigPath = $configPath
+        BackupPath = $backupPath
+        Changed = $changed
+    }
+}
+
+function Restore-GlobalDockerCredentialHelper($State) {
+    if ($null -eq $State) { return }
+
+    if (Test-Path $State.BackupPath) {
+        if ($State.Changed) {
+            Copy-Item -Path $State.BackupPath -Destination $State.ConfigPath -Force
+            Write-Host "[restok] restored original Docker Desktop credential configuration"
+        }
+        Remove-Item -Path $State.BackupPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Initialize-IsolatedDockerCliConfig {
     $sourceRoot = Join-Path $env:USERPROFILE ".docker"
     $targetRoot = Join-Path $RuntimeRoot "docker-cli"
@@ -75,9 +125,7 @@ function Initialize-IsolatedDockerCliConfig {
         if ($config.PSObject.Properties.Name -contains "credHelpers") {
             $config.PSObject.Properties.Remove("credHelpers")
         }
-        $json = $config | ConvertTo-Json -Depth 32
-        $utf8NoBom = New-Object System.Text.UTF8Encoding
-        [System.IO.File]::WriteAllText($configPath, $json, $utf8NoBom)
+        Write-JsonUtf8NoBom $configPath $config
     } else {
         '{"auths":{}}' | Set-Content -Path $configPath -Encoding ascii
     }
@@ -275,19 +323,24 @@ $env:RESTOK_UPLOAD_DATA_DIR = ($UploadRoot -replace "\\", "/")
 $env:RESTOK_CADDYFILE = ($CaddyFile -replace "\\", "/")
 $env:RESTOK_CLOUDFLARED_BINARY = ($CloudflaredBinary -replace "\\", "/")
 
-Initialize-IsolatedDockerCliConfig
+$dockerCredentialState = Disable-GlobalDockerCredentialHelper
+try {
+    Initialize-IsolatedDockerCliConfig
 
-Write-Host "[restok] validating production compose"
-docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile config *> $null
-if ($LASTEXITCODE -ne 0) { throw "Restok docker compose configuration is invalid." }
+    Write-Host "[restok] validating production compose"
+    docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile config *> $null
+    if ($LASTEXITCODE -ne 0) { throw "Restok docker compose configuration is invalid." }
 
-Write-Host "[restok] building application images before replacing running containers"
-docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile build
-if ($LASTEXITCODE -ne 0) { throw "Restok image build failed; existing containers were left running." }
+    Write-Host "[restok] building application images before replacing running containers"
+    docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile build
+    if ($LASTEXITCODE -ne 0) { throw "Restok image build failed; existing containers were left running." }
 
-Write-Host "[restok] starting production containers"
-docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile up -d --remove-orphans
-if ($LASTEXITCODE -ne 0) { throw "Restok docker compose deployment failed." }
+    Write-Host "[restok] starting production containers"
+    docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile up -d --remove-orphans
+    if ($LASTEXITCODE -ne 0) { throw "Restok docker compose deployment failed." }
+} finally {
+    Restore-GlobalDockerCredentialHelper $dockerCredentialState
+}
 
 $localHealth = "http://127.0.0.1:$localPort/api/auth/health"
 $localReady = $false
