@@ -156,7 +156,8 @@ if ($LASTEXITCODE -ne 0) { throw "Docker Compose is not available." }
 
 if (-not $Force -and (Test-Path (Join-Path $MapleSourceRoot ".git"))) {
     Write-Host "[maple] checking whether a new Maple revision exists"
-    git -C $MapleSourceRoot fetch --prune origin main *> $null
+    $fetchCommand = 'git -C "' + $MapleSourceRoot + '" fetch --prune origin main >NUL 2>&1'
+    cmd.exe /d /s /c $fetchCommand
     if ($LASTEXITCODE -ne 0) { throw "Failed to check latest Maple revision." }
     $latestSha = (git -C $MapleSourceRoot rev-parse origin/main | Out-String).Trim()
     if ($latestSha -and (Test-HealthyExistingDeployment $latestSha)) {
