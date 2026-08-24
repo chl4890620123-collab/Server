@@ -1,0 +1,12 @@
+checked_utc=2026-08-24T15:59:10.6373269Z
+bundle_present=True
+bundle_bytes=172861440
+restok-db=missing
+restok-ai=missing
+restok-backend=missing
+restok-frontend=missing
+restok-caddy=missing
+restok-public-tunnel=missing
+local_health=unreachable
+deployed_sha=none
+ssh=success
