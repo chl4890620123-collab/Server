@@ -1,7 +1,7 @@
-run_id=32739339830
+run_id=32739597957
 run_attempt=1
 event=push
 ssh_available=true
-ssh_connection=success
-remote_exit_code=1
-deployment=failure
+ssh_connection=pending
+remote_exit_code=pending
+deployment=running
