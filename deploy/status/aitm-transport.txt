@@ -1,10 +1,10 @@
-run_id=32747922170
+run_id=32749154397
 run_attempt=1
 event=push
-aitm_sha=dd2eea4b6de8b2c5160a07fea0cb52f698707017
+aitm_sha=56fbd329ee1fe504e3adac646373aa9a4e48cf6d
 image_bundle=true
 ssh_available=true
-build=failure
-ssh_connection=not_attempted
-remote_exit_code=999
-deployment=failure
+build=pending
+ssh_connection=pending
+remote_exit_code=pending
+deployment=running
