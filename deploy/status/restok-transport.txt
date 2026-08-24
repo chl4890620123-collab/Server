@@ -1,7 +1,9 @@
-run_id=32742922390
+run_id=32745397431
 run_attempt=1
-event=schedule
+event=push
+restok_sha=ad6cbb6d1ac760994050118867783b26b64c671d
+image_bundle=true
 ssh_available=true
-ssh_connection=success
-remote_exit_code=1
-deployment=failure
+ssh_connection=pending
+remote_exit_code=pending
+deployment=running
