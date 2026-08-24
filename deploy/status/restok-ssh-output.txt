@@ -1,13 +1,13 @@
 Warning: Permanently added '121.166.129.218' (ED25519) to the list of known hosts.
 #< CLIXML
-HEAD is now at e7c888f chore: mark Restok deployment running
+HEAD is now at 8696813 chore: mark Restok deployment running
 From https://github.com/chl4890620123-collab/Server
  * branch            main       -> FETCH_HEAD
-   e7c888f..8696813  main       -> origin/main
+   8696813..503095c  main       -> origin/main
 branch 'main' set up to track 'origin/main'.
 Your branch is up to date with 'origin/main'.
 Reset branch 'main'
-HEAD is now at 8696813 chore: mark Restok deployment running
+HEAD is now at 503095c chore: mark Restok deployment running
 [restok] no legacy database volume conflict detected
 [restok] checking mini PC runtime
 [restok] checking latest application source
@@ -17,33 +17,34 @@ Reset branch 'main'
 branch 'main' set up to track 'origin/main'.
 Your branch is up to date with 'origin/main'.
 HEAD is now at ad6cbb6 fix: finish independent deployment readiness
+[restok] temporarily disabled Docker Desktop credential helper for non-interactive build
 [restok] using isolated Docker CLI config without desktop credential helper
-[restok] validating production compose
-<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>처음 사용하기 위해 [restok] building application images before replacing running containers
-모듈을 준비하는 중입니다.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">2</I64><PR N="Record"><AV>처음 사용하기 위해 모듈을 준비하는 중입니다.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="information" RefId="2"><TN RefId="1"><T>System.Management.Automation.InformationRecord</T><T>System.Object</T></TN><ToString>[restok] no legacy database volume conflict detected</ToString><Props><Obj N="MessageData" RefId="3"><TN RefId="2"><T>System.Management.Automation.HostInformationMessage</T><T>System.Object</T></TN><ToString>[restok] no legacy database volume conflict detected</ToString><Props><S N="Message">[restok] no legacy database volume conflict detected</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\check-restok-legacy-data.ps1</S><DT N="TimeGenerated">2026-08-24T23:35:18.8912569+09:00</DT><Obj N="Tags" RefId="4"><TN RefId="3"><T>System.Collections.Generic.List`1[[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089]]</T><T>System.Object</T></TN><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">9420</U32><U32 N="NativeThreadId">9408</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="5"><TNRef RefId="1" /><ToString>[restok] checking mini PC runtime</ToString><Props><Obj N="MessageData" RefId="6"><TNRef RefId="2" /><ToString>[restok] checking mini PC runtime</ToString><Props><S N="Message">[restok] checking mini PC runtime</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:35:19.0298267+09:00</DT><Obj N="Tags" RefId="7"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">9420</U32><U32 N="NativeThreadId">9408</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="progress" RefId="8"><TNRef RefId="0" /><MS><I64 N="SourceId">3</I64><PR N="Record"><AV>처음 사용하기 위해 모듈을 준비하는 중입니다.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="9"><TNRef RefId="0" /><MS><I64 N="SourceId">4</I64><PR N="Record"><AV>Get-NetTCPConnection -State Listen -LocalPort $localPort -ErrorAction SilentlyContinue</AV><AI>925515000</AI><Nil /><PI>-1</PI><PC>100</PC><T>Completed</T><SR>0</SR><SD>1/1 완료됨</SD></PR></MS></Obj><Obj S="information" RefId="10"><TNRef RefId="1" /><ToString>[restok] checking latest application source</ToString><Props><Obj N="MessageData" RefId="11"><TNRef RefId="2" /><ToString>[restok] checking latest application source</ToString><Props><S N="Message">[restok] checking latest application source</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:35:20.1718791+09:00</DT><Obj N="Tags" RefId="12"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">9420</U32><U32 N="NativeThreadId">9408</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="13"><TNRef RefId="1" /><ToString>[restok] using isolated Docker CLI config without desktop credential helper</ToString><Props><Obj N="MessageData" RefId="14"><TNRef RefId="2" /><ToString>[restok] using isolated Docker CLI config without desktop credential helper</ToString><Props><S N="Message">[restok] using isolated Docker CLI config without desktop credential helper</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:35:23.9848486+09:00</DT><Obj N="Tags" RefId="15"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">9420</U32><U32 N="NativeThreadId">9408</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="16"><TNRef RefId="1" /><ToString>[restok] validating production compose</ToString><Props><Obj N="MessageData" RefId="17"><TNRef RefId="2" /><ToString>[restok] validating production compose</ToString><Props><S N="Message">[restok] validating production compose</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:35:23.9860027+09:00</DT><Obj N="Tags" RefId="18"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">9420</U32><U32 N="NativeThreadId">9408</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="19"><TNRef RefId="1" /><ToString>[restok] building application images before replacing running containers</ToString><Props><Obj N="MessageData" RefId="20"><TNRef RefId="2" /><ToString>[restok] building application images before replacing running containers</ToString><Props><S N="Message">[restok] building application images before replacing running containers</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:35:25.7352398+09:00</DT><Obj N="Tags" RefId="21"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Ob Image restok-production-frontend Building 
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>처음 사용하기 위해 [restok] validating production compose
+모듈을 준비하는 중입니다.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">2</I64><PR N="Record"><AV>처음 사용하기 위해 모듈을 준비하는 중입니다.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="information" RefId="2"><TN RefId="1"><T>System.Management.Automation.InformationRecord</T><T>System.Object</T></TN><ToString>[restok] no legacy database volume conflict detected</ToString><Props><Obj N="MessageData" RefId="3"><TN RefId="2"><T>System.Management.Automation.HostInformationMessage</T><T>System.Object</T></TN><ToString>[restok] no legacy database volume conflict detected</ToString><Props><S N="Message">[restok] no legacy database volume conflict detected</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\check-restok-legacy-data.ps1</S><DT N="TimeGenerated">2026-08-24T23:38:40.7262242+09:00</DT><Obj N="Tags" RefId="4"><TN RefId="3"><T>System.Collections.Generic.List`1[[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089]]</T><T>System.Object</T></TN><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">13944</U32><U32 N="NativeThreadId">4780</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="5"><TNRef RefId="1" /><ToString>[restok] checking mini PC runtime</ToString><Props><Obj N="MessageData" RefId="6"><TNRef RefId="2" /><ToString>[restok] checking mini PC runtime</ToString><Props><S N="Message">[restok] checking mini PC runtime</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:38:40.8569064+09:00</DT><Obj N="Tags" RefId="7"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">13944</U32><U32 N="NativeThreadId">4780</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="progress" RefId="8"><TNRef RefId="0" /><MS><I64 N="SourceId">3</I64><PR N="Record"><AV>처음 사용하기 위해 모듈을 준비하는 중입니다.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="9"><TNRef RefId="0" /><MS><I64 N="SourceId">4</I64><PR N="Record"><AV>Get-NetTCPConnection -State Listen -LocalPort $localPort -ErrorAction SilentlyContinue</AV><AI>1588806277</AI><Nil /><PI>-1</PI><PC>100</PC><T>Completed</T><SR>0</SR><SD>1/1 완료됨</SD></PR></MS></Obj><Obj S="information" RefId="10"><TNRef RefId="1" /><ToString>[restok] checking latest application source</ToString><Props><Obj N="MessageData" RefId="11"><TNRef RefId="2" /><ToString>[restok] checking latest application source</ToString><Props><S N="Message">[restok] checking latest application source</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:38:42.140459+09:00</DT><Obj N="Tags" RefId="12"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">13944</U32><U32 N="NativeThreadId">4780</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="13"><TNRef RefId="1" /><ToString>[restok] temporarily disabled Docker Desktop credential helper for non-interactive build</ToString><Props><Obj N="MessageData" RefId="14"><TNRef RefId="2" /><ToString>[restok] temporarily disabled Docker Desktop credential helper for non-interactive build</ToString><Props><S N="Message">[restok] temporarily disabled Docker Desktop credential helper for non-interactive build</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:38:43.3992045+09:00</DT><Obj N="Tags" RefId="15"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">13944</U32><U32 N="NativeThreadId">4780</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="16"><TNRef RefId="1" /><ToString>[restok] using isolated Docker CLI config without desktop credential helper</ToString><Props><Obj N="MessageData" RefId="17"><TNRef RefId="2" /><ToString>[restok] using isolated Docker CLI config without desktop credential helper</ToString><Props><S N="Message">[restok] using isolated Docker CLI config without desktop credential helper</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:38:46.0717584+09:00</DT><Obj N="Tags" RefId="18"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">13944</U32><U32 N="NativeThreadId">4780</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="19"><TNRef RefId="1" /><ToString>[restok] validating production compose</ToString><Props><Obj N="MessageData" RefId="20"><TNRef RefId="2" /><ToString>[restok] validating production compose</ToString><Props><S N="Message">[restok] validating production compose</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:38:46.0729199+09:00</DT><Obj N="Tags" RefId="[restok] building application images before replacing running containers
  Image restok-production-ai Building 
  Image restok-production-backend Building 
+ Image restok-production-frontend Building 
 #1 [internal] load local bake definitions
 #1 reading from stdin 1.59kB 0.0s done
 #1 DONE 0.0s
 
-#2 [ai internal] load build definition from Dockerfile
-#2 transferring dockerfile: 363B 0.0s done
+#2 [frontend internal] load build definition from Dockerfile
+#2 transferring dockerfile: 486B 0.0s done
 #2 DONE 0.1s
 
-#3 [frontend internal] load build definition from Dockerfile
-#3 transferring dockerfile: 486B 0.0s done
+#3 [backend internal] load build definition from Dockerfile
+#3 transferring dockerfile: 544B 0.0s done
 #3 DONE 0.1s
 
-#4 [backend internal] load build definition from Dockerfile
-#4 transferring dockerfile: 544B 0.0s done
+#4 [ai internal] load build definition from Dockerfile
+#4 transferring dockerfile: 363B 0.0s done
 #4 DONE 0.1s
 
-#5 [ai internal] load metadata for docker.io/library/python:3.12-slim
-#5 DONE 0.1s
+#5 [backend internal] load metadata for docker.io/library/eclipse-temurin:21-jre-alpine
+#5 ...
 
-#6 [backend internal] load metadata for docker.io/library/eclipse-temurin:21-jre-alpine
-#6 ...
+#6 [ai internal] load metadata for docker.io/library/python:3.12-slim
+#6 DONE 0.1s
 
 #7 [frontend internal] load metadata for docker.io/library/node:20-alpine
 #7 DONE 0.1s
@@ -59,9 +60,6 @@ HEAD is now at ad6cbb6 fix: finish independent deployment readiness
 #10 resolve docker.io/library/python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a 0.1s done
 #10 DONE 0.1s
 
-#10 [ai 1/6] FROM docker.io/library/python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a
-#10 DONE 0.1s
-
 #9 [ai internal] load build context
 #9 transferring context: 64B done
 #9 DONE 0.0s
@@ -75,11 +73,11 @@ HEAD is now at ad6cbb6 fix: finish independent deployment readiness
 #13 [ai 4/6] RUN pip install --no-cache-dir -r requirements.txt
 #13 ...
 
-#6 [backend internal] load metadata for docker.io/library/eclipse-temurin:21-jre-alpine
-#6 ERROR: error getting credentials - err: exit status 1, out: `A specified logon session does not exist. It may already have been terminated.`
-
 #14 [backend internal] load metadata for docker.io/library/eclipse-temurin:21-jdk-alpine
-#14 CANCELED
+#14 ERROR: error getting credentials - err: exit status 1, out: `A specified logon session does not exist. It may already have been terminated.`
+
+#5 [backend internal] load metadata for docker.io/library/eclipse-temurin:21-jre-alpine
+#5 CANCELED
 
 #15 [frontend internal] load metadata for docker.io/library/nginx:stable-alpine
 #15 ERROR: error getting credentials - err: exit status 1, out: `A specified logon session does not exist. It may already have been terminated.`
@@ -87,24 +85,20 @@ HEAD is now at ad6cbb6 fix: finish independent deployment readiness
 #13 [ai 4/6] RUN pip install --no-cache-dir -r requirements.txt
 #13 CANCELED
 ------
+ > [backend internal] load metadata for docker.io/library/eclipse-temurin:21-jdk-alpine:
+------
+------
  > [frontend internal] load metadata for docker.io/library/nginx:stable-alpine:
 ------
-------
- > [backend internal] load metadata for docker.io/library/eclipse-temurin:21-jre-alpine:
-------
-Dockerfile:10
+Dockerfile:1
 
 --------------------
 
-   8 |     RUN ./gradlew clean bootJar -x test --no-daemon
+   1 | >>> FROM eclipse-temurin:21-jdk-alpine AS build
 
-   9 |     
+   2 |     WORKDIR /app
 
-  10 | >>> FROM eclipse-temurin:21-jre-alpine
-
-  11 |     WORKDIR /app
-
-  12 |     RUN addgroup -S restok && adduser -S restok -G restok \
+   3 |     COPY gradlew gradlew
 
 --------------------
 
@@ -112,6 +106,7 @@ target backend: failed to solve: error getting credentials - err: exit status 1,
 
 
 
-View build details: docker-desktop://dashboard/build/default/default/wfr0anup9fa0ntxy3syewwifh
+View build details: docker-desktop://dashboard/build/default/default/gchftqm343hsckb2f2g4dcgje
 
-j><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">9420</U32><U32 N="NativeThreadId">9408</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><S S="Error">Restok image build failed; existing containers were left running._x000D__x000A_</S><S S="Error">위치 C:\home\server\app\deploy\scripts\deploy-restok.ps1:286 문자:28_x000D__x000A_</S><S S="Error">+ ... DE -ne 0) { throw "Restok image build failed; existing containers wer ..._x000D__x000A_</S><S S="Error">+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~_x000D__x000A_</S><S S="Error">    + CategoryInfo          : OperationStopped: (Restok image bu...e left running.:String) [], RuntimeException_x000D__x000A_</S><S S="Error">    + FullyQualifiedErrorId : Restok image build failed; existing containers were left running._x000D__x000A_</S><S S="Error"> _x000D__x000A_</S></Objs>
+[restok] restored original Docker Desktop credential configuration
+21"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">13944</U32><U32 N="NativeThreadId">4780</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="22"><TNRef RefId="1" /><ToString>[restok] building application images before replacing running containers</ToString><Props><Obj N="MessageData" RefId="23"><TNRef RefId="2" /><ToString>[restok] building application images before replacing running containers</ToString><Props><S N="Message">[restok] building application images before replacing running containers</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:38:47.8932643+09:00</DT><Obj N="Tags" RefId="24"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">13944</U32><U32 N="NativeThreadId">4780</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="25"><TNRef RefId="1" /><ToString>[restok] restored original Docker Desktop credential configuration</ToString><Props><Obj N="MessageData" RefId="26"><TNRef RefId="2" /><ToString>[restok] restored original Docker Desktop credential configuration</ToString><Props><S N="Message">[restok] restored original Docker Desktop credential configuration</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:38:52.1057648+09:00</DT><Obj N="Tags" RefId="27"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">13944</U32><U32 N="NativeThreadId">4780</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><S S="Error">Restok image build failed; existing containers were left running._x000D__x000A_</S><S S="Error">위치 C:\home\server\app\deploy\scripts\deploy-restok.ps1:336 문자:32_x000D__x000A_</S><S S="Error">+ ... DE -ne 0) { throw "Restok image build failed; existing containers wer ..._x000D__x000A_</S><S S="Error">+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~_x000D__x000A_</S><S S="Error">    + CategoryInfo          : OperationStopped: (Restok image bu...e left running.:String) [], RuntimeException_x000D__x000A_</S><S S="Error">    + FullyQualifiedErrorId : Restok image build failed; existing containers were left running._x000D__x000A_</S><S S="Error"> _x000D__x000A_</S></Objs>
