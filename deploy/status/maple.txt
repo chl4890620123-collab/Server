@@ -1,3 +1,3 @@
-maple_sha=ae70e2f04caae17ed7b6ef26601e16019b5e2394
-public_url=https://les-antique-taxation-primarily.trycloudflare.com
-public_health=https://les-antique-taxation-primarily.trycloudflare.com/api/health
+maple_sha=0834c9d09490d060d5180b99a5f139256a3db5ed
+public_url=https://cyber-discussed-strongly-under.trycloudflare.com
+public_health=https://cyber-discussed-strongly-under.trycloudflare.com/api/health
