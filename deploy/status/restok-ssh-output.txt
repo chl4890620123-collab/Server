@@ -1,0 +1,125 @@
+Warning: Permanently added '121.166.129.218' (ED25519) to the list of known hosts.
+#< CLIXML
+HEAD is now at 1da8d29 chore: mark Maple deployment running
+From https://github.com/chl4890620123-collab/Server
+ * branch            main       -> FETCH_HEAD
+   1da8d29..2daeb37  main       -> origin/main
+Reset branch 'main'
+branch 'main' set up to track 'origin/main'.
+Your branch is up to date with 'origin/main'.
+HEAD is now at 2daeb37 chore: mark Restok deployment running
+[restok] no legacy database volume conflict detected
+[restok] checking mini PC runtime
+[restok] created server-local runtime env
+[restok] downloading Cloudflared runtime
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0  0      0   0      0   0      0      0      0                              0  0      0   0      0   0      0      0      0                              0
+  0      0   0      0   0      0      0      0                              0  0      0   0      0   0      0      0      0                              0  0      0   0      0   0      0      0      0                              0
+  0      0   0      0   0      0      0      0                              0  6 37.95M   6  2.39M   0      0  1.38M      0   00:27   00:01   00:26  2.38M 13 37.95M  13  5.14M   0      0  1.87M      0   00:20   00:02   00:18  2.55M 20 37.95M  20  7.67M   0      0  2.03M      0   00:18   00:03   00:15  2.53M 25 37.95M  25  9.60M   0      0  2.01M      0   00:18   00:04   00:14  2.37M 27 37.95M  27 10.56M   0      0  1.81M      0   00:20   00:05   00:15  2.08M 32 37.95M  32 12.20M   0      0  1.79M      0   00:21   00:06   00:15  1.93M 40 37.95M  40 15.39M   0      0  1.97M      0   00:19   00:07   00:12  2.02M 47 37.95M  47 17.90M   0      0  2.03M      0   00:18   00:08   00:10  2.02M 55 37.95M  55 21.23M   0      0  2.16M      0   00:17   00:09   00:08  2.30M 62 37.95M  62 23.54M   0      0  2.17M      0   00:17   00:10   00:07  2.59M 68 37.95M  68 25.93M   0      0  2.19M      0   00:17   00:11   00:06  2.74M 73 37.95M  73 28.06M   0      0  2.18M      0   00:17   00:12   00:05  2.52M 80 37.95M  80 30.39M   0      0  2.19M      0   00:17   00:13   00:04  2.48M 87 37.95M  87 33.03M   0      0  2.22M      0   00:17   00:14   00:03  2.34M 93 37.95M  93 35.65M   0      0  2.25M      0   00:16   00:15   00:01  2.41M 98 37.95M  98 37.28M   0      0  2.20M      0   00:17   00:16   00:01  2.24M100 37.95M 100 37.95M   0      0  2.20M      0   00:17   00:17          2.24M100 37.95M 100 37.95M   0      0  2.20M      0   00:17   00:17          2.24M100 37.95M 100 37.95M   0      0  2.20M      0   00:17   00:17          2.24M
+Cloning into 'C:\home\server\sources\restok'...
+[restok] checking latest application source
+From https://github.com/chl4890620123-collab/Restok-Rangchain
+ * branch            main       -> FETCH_HEAD
+Reset branch 'main'
+branch 'main' set up to track 'origin/main'.
+Your branch is up to date with 'origin/main'.
+HEAD is now at ad6cbb6 fix: finish independent deployment readiness
+[restok] validating production compose
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><Obj S="progress" RefId="0"><TN RefId="0"><T>System.Management.Automation.PSCustomObject</T><T>System.Object</T></TN><MS><I64 N="SourceId">1</I64><PR N="Record"><AV>처음 사용하기 위해 모듈을 준비하는 중입니다.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="1"><TNRef RefId="0" /><MS><I64 N="SourceId">2</I64><PR N="Record"><AV>처음 사용하기 위해 모듈을 준비하는 중입니다.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="information" RefId="2"><TN RefId="1"><T>System.Management.Automation.InformationRecord</T><T>System.Object</T></TN><ToString>[restok] no legacy database volume conflict detected</ToString><Props><Obj N="MessageData" RefId="3"><TN RefId="2"><T>System.Management.Automation.HostInformationMessage</T><T>System.Object</T></TN><ToString>[restok] no legacy database volume conflict detected</ToString><Props><S N="Message">[restok] no legacy database volume conflict detected</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\check-restok-legacy-data.ps1</S><DT N="TimeGenerated">2026-08-24T23:28:32.5469138+09:00</DT><Obj N="Tags" RefId="4"><TN RefId="3"><T>System.Collections.Generic.List`1[[System.String, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089]]</T><T>System.Object</T></TN><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">4900</U32><U32 N="NativeThreadId">16600</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="5"><TNRef RefId="1" /><ToString>[restok] checking mini PC runtime</ToString><Props><Obj N="MessageData" RefId="6"><TNRef RefId="2" /><ToString>[restok] checking mini PC runtime</ToString><Props><S N="Message">[restok] checking mini PC runtime</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:28:32.6592713+09:00</DT><Obj N="Tags" RefId="7"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">4900</U32><U32 N="NativeThreadId">16600</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="8"><TNRef RefId="1" /><ToString>[restok] created server-local runtime env</ToString><Props><Obj N="MessageData" RefId="9"><TNRef RefId="2" /><ToString>[restok] created server-local runtime env</ToString><Props><S N="Message">[restok] created server-local runtime env</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:28:32.9280258+09:00</DT><Obj N="Tags" RefId="10"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">4900</U32><U32 N="NativeThreadId">16600</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="progress" RefId="11"><TNRef RefId="0" /><MS><I64 N="SourceId">3</I64><PR N="Record"><AV>처음 사용하기 위해 모듈을 준비하는 중입니다.</AV><AI>0</AI><Nil /><PI>-1</PI><PC>-1</PC><T>Completed</T><SR>-1</SR><SD> </SD></PR></MS></Obj><Obj S="progress" RefId="12"><TNRef RefId="0" /><MS><I64 N="SourceId">4</I64><PR N="Record"><AV>Get-NetTCPConnection -State Listen -LocalPort $localPort -ErrorAction SilentlyContinue</AV><AI>1635135351</AI><Nil /><PI>-1</PI><PC>100</PC><T>Completed</T><SR>0</SR><SD>1/1 완료됨</SD></PR></MS></Obj><Obj S="information" RefId="13"><TNRef RefId="1" /><ToString>[restok] downloading Cloudflared runtime</ToString><Props><Obj N="MessageData" RefId="14"><TNRef RefId="2" /><ToString>[restok] downloading Cloudflared runtime</ToString><Props><S N="Message">[restok] downloading Cloudflared runtime</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:28:33.7894341+09:00</DT><Obj N="Tags" RefId="15"><TNRef RefId="3" /><L[restok] building application images before replacing running containers
+ST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">4900</U32><U32 N="NativeThreadId">16600</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="16"><TNRef RefId="1" /><ToString>[restok] checking latest application source</ToString><Props><Obj N="MessageData" RefId="17"><TNRef RefId="2" /><ToString>[restok] checking latest application source</ToString><Props><S N="Message">[restok] checking latest application source</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:28:53.4599917+09:00</DT><Obj N="Tags" RefId="18"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">4900</U32><U32 N="NativeThreadId">16600</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S="information" RefId="19"><TNRef RefId="1" /><ToString>[restok] validating production compose</ToString><Props><Obj N="MessageData" RefId="20"><TNRef RefId="2" /><ToString>[restok] validating production compose</ToString><Props><S N="Message">[restok] validating production compose</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:28:54.6278218+09:00</DT><Obj N="Tags" RefId="21"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">4900</U32><U32 N="NativeThreadId">16600</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><Obj S=" Image restok-production-ai Building 
+ Image restok-production-backend Building 
+ Image restok-production-frontend Building 
+#1 [internal] load local bake definitions
+#1 reading from stdin 1.59kB 0.0s done
+#1 DONE 0.0s
+
+#2 [frontend internal] load build definition from Dockerfile
+#2 transferring dockerfile:
+#2 ...
+
+#3 [ai internal] load build definition from Dockerfile
+#3 transferring dockerfile: 363B 0.0s done
+#3 DONE 0.2s
+
+#2 [frontend internal] load build definition from Dockerfile
+#2 transferring dockerfile: 486B 0.0s done
+#2 DONE 0.2s
+
+#4 [backend internal] load build definition from Dockerfile
+#4 transferring dockerfile: 544B 0.0s done
+#4 DONE 0.3s
+
+#5 [frontend internal] load metadata for docker.io/library/node:20-alpine
+#5 DONE 0.1s
+
+#6 [backend internal] load metadata for docker.io/library/eclipse-temurin:21-jre-alpine
+#6 ...
+
+#7 [ai internal] load metadata for docker.io/library/python:3.12-slim
+#7 DONE 0.2s
+
+#8 [ai internal] load .dockerignore
+#8 transferring context: 2B done
+#8 DONE 0.1s
+
+#9 [ai internal] load build context
+#9 DONE 0.0s
+
+#10 [ai 1/6] FROM docker.io/library/python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a
+#10 resolve docker.io/library/python:3.12-slim@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a 0.1s done
+#10 DONE 0.1s
+
+#9 [ai internal] load build context
+#9 transferring context: 3.94kB 0.0s done
+#9 DONE 0.1s
+
+#11 [ai 2/6] WORKDIR /app
+#11 CACHED
+
+#12 [ai 3/6] COPY requirements.txt .
+#12 DONE 0.1s
+
+#13 [backend internal] load metadata for docker.io/library/eclipse-temurin:21-jdk-alpine
+#13 ...
+
+#14 [frontend internal] load metadata for docker.io/library/nginx:stable-alpine
+#14 ERROR: error getting credentials - err: exit status 1, out: `A specified logon session does not exist. It may already have been terminated.`
+
+#6 [backend internal] load metadata for docker.io/library/eclipse-temurin:21-jre-alpine
+#6 ERROR: error getting credentials - err: exit status 1, out: `A specified logon session does not exist. It may already have been terminated.`
+
+#13 [backend internal] load metadata for docker.io/library/eclipse-temurin:21-jdk-alpine
+#13 CANCELED
+
+#15 [ai 4/6] RUN pip install --no-cache-dir -r requirements.txt
+#15 CANCELED
+------
+ > [frontend internal] load metadata for docker.io/library/nginx:stable-alpine:
+------
+------
+ > [backend internal] load metadata for docker.io/library/eclipse-temurin:21-jre-alpine:
+------
+Dockerfile:12
+
+--------------------
+
+  10 |     RUN npm run build
+
+  11 |     
+
+  12 | >>> FROM nginx:stable-alpine
+
+  13 |     COPY nginx.conf /etc/nginx/conf.d/default.conf
+
+  14 |     COPY --from=build /app/build /usr/share/nginx/html
+
+--------------------
+
+target frontend: failed to solve: error getting credentials - err: exit status 1, out: `A specified logon session does not exist. It may already have been terminated.`
+
+
+
+View build details: docker-desktop://dashboard/build/default/default/z33ls52qjsz1r6in4flukle6n
+
+information" RefId="22"><TNRef RefId="1" /><ToString>[restok] building application images before replacing running containers</ToString><Props><Obj N="MessageData" RefId="23"><TNRef RefId="2" /><ToString>[restok] building application images before replacing running containers</ToString><Props><S N="Message">[restok] building application images before replacing running containers</S><B N="NoNewLine">false</B><S N="ForegroundColor">Gray</S><S N="BackgroundColor">Black</S></Props></Obj><S N="Source">C:\home\server\app\deploy\scripts\deploy-restok.ps1</S><DT N="TimeGenerated">2026-08-24T23:28:54.8576574+09:00</DT><Obj N="Tags" RefId="24"><TNRef RefId="3" /><LST><S>PSHOST</S></LST></Obj><S N="User">DESKTOP-K7481PM\home</S><S N="Computer">DESKTOP-K7481PM</S><U32 N="ProcessId">4900</U32><U32 N="NativeThreadId">16600</U32><U32 N="ManagedThreadId">10</U32></Props></Obj><S S="Error">Restok image build failed; existing containers were left running._x000D__x000A_</S><S S="Error">위치 C:\home\server\app\deploy\scripts\deploy-restok.ps1:246 문자:28_x000D__x000A_</S><S S="Error">+ ... DE -ne 0) { throw "Restok image build failed; existing containers wer ..._x000D__x000A_</S><S S="Error">+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~_x000D__x000A_</S><S S="Error">    + CategoryInfo          : OperationStopped: (Restok image bu...e left running.:String) [], RuntimeException_x000D__x000A_</S><S S="Error">    + FullyQualifiedErrorId : Restok image build failed; existing containers were left running._x000D__x000A_</S><S S="Error"> _x000D__x000A_</S></Objs>
