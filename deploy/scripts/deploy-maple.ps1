@@ -155,9 +155,6 @@ if (-not $localReady) { throw "Maple local health check failed: $localHealth" }
 Write-Host "[maple] waiting for public preview URL"
 $publicUrl = $null
 for ($attempt = 1; $attempt -le 36; $attempt++) {
-    # Cloudflared writes normal operational logs to stderr. Windows PowerShell
-    # 5.1 can promote native stderr into error records when ErrorAction=Stop,
-    # so collect both streams through cmd.exe before applying the URL regex.
     $logs = (cmd.exe /d /s /c "docker logs maple-public-tunnel 2>&1" | Out-String)
     $matches = [regex]::Matches($logs, 'https://[a-z0-9-]+\.trycloudflare\.com')
     if ($matches.Count -gt 0) { $publicUrl = $matches[$matches.Count - 1].Value; break }
@@ -177,7 +174,27 @@ for ($attempt = 1; $attempt -le 24; $attempt++) {
 if (-not $publicReady) { throw "Public Maple health check failed: $publicHealth" }
 
 $root = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/" -TimeoutSec 10
-if ($root.StatusCode -ne 200 -or $root.Content -notmatch "Maple Craft Analytics") { throw "Public Maple page validation failed." }
+if ($root.StatusCode -ne 200 -or $root.Content -notmatch "Maple Meisterville Analytics") {
+    throw "Public Maple page validation failed."
+}
+
+$categories = Invoke-RestMethod -Method Get -Uri "$publicUrl/api/meister/categories" -TimeoutSec 10
+$categoryKeys = @($categories | ForEach-Object { $_.key })
+$expectedKeys = @("herbalism", "mining", "equipment", "accessory", "alchemy")
+if ($categoryKeys.Count -ne 5) { throw "Meisterville category validation failed: expected 5 categories." }
+foreach ($key in $expectedKeys) {
+    if ($categoryKeys -notcontains $key) { throw "Meisterville category validation failed: missing $key" }
+}
+
+$catalogMeta = Invoke-RestMethod -Method Get -Uri "$publicUrl/api/meister/meta" -TimeoutSec 10
+if ([int]$catalogMeta.total_recipe_count -lt 50) {
+    throw "Meisterville catalog validation failed: recipe count is too small."
+}
+
+$priceProbe = Invoke-RestMethod -Method Get -Uri "$publicUrl/api/market-prices?category_key=mining" -TimeoutSec 10
+if (@($priceProbe).Count -lt 1) {
+    throw "Market price API validation failed."
+}
 
 $MapleSha | Set-Content -Path $MarkerFile -Encoding ascii
 $verifiedAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -193,3 +210,5 @@ Write-Host "[maple] deployment complete"
 Write-Host "[maple] public URL: $publicUrl"
 Write-Host "[maple] public health: $publicHealth"
 Write-Host "[maple] source SHA: $MapleSha"
+Write-Host "[maple] Meisterville categories: $($categoryKeys -join ', ')"
+Write-Host "[maple] Meisterville recipes: $($catalogMeta.total_recipe_count)"
