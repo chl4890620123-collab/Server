@@ -1,0 +1,97 @@
+name: Diagnose Restok live deployment
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/diagnose-restok-live.yml"
+      - "deploy/status/restok-live-trigger.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Inspect Restok runtime safely
+        id: inspect
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh" deploy/status
+          chmod 700 "$HOME/.ssh"
+          port="${SERVER_PORT:-22}"
+          key_args=()
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/restok_diag_key"
+            chmod 600 "$HOME/.ssh/restok_diag_key"
+            key_args=(-i "$HOME/.ssh/restok_diag_key")
+          fi
+          if [ -n "$SERVER_PASSWORD" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SERVER_PASSWORD"
+            auth=(sshpass -e ssh "${key_args[@]}")
+          else
+            auth=(ssh "${key_args[@]}")
+          fi
+
+          cat > "$RUNNER_TEMP/diag.ps1" <<'PWSH'
+          $ErrorActionPreference = 'SilentlyContinue'
+          Write-Output ('checked_utc=' + (Get-Date).ToUniversalTime().ToString('o'))
+          $bundle = 'C:\home\server\restok-images.tar.gz'
+          Write-Output ('bundle_present=' + (Test-Path $bundle))
+          if (Test-Path $bundle) { Write-Output ('bundle_bytes=' + (Get-Item $bundle).Length) }
+          foreach ($name in @('restok-db','restok-ai','restok-backend','restok-frontend','restok-caddy','restok-public-tunnel')) {
+              $exists = (docker ps -a --filter "name=^/$name$" --format '{{.Names}}' | Out-String).Trim()
+              if ($exists -eq $name) {
+                  $state = (docker inspect --format '{{.State.Status}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' $name | Out-String).Trim()
+                  Write-Output ($name + '=' + $state)
+              } else {
+                  Write-Output ($name + '=missing')
+              }
+          }
+          try {
+              $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:9050/api/auth/health' -TimeoutSec 4
+              Write-Output ('local_health=' + $r.StatusCode)
+          } catch { Write-Output 'local_health=unreachable' }
+          if (Test-Path 'D:\server-data\restok\runtime\deployed.sha') {
+              Write-Output ('deployed_sha=' + ((Get-Content 'D:\server-data\restok\runtime\deployed.sha' -Raw).Trim()))
+          } else { Write-Output 'deployed_sha=none' }
+          PWSH
+
+          encoded="$(iconv -f UTF-8 -t UTF-16LE "$RUNNER_TEMP/diag.ps1" | base64 -w0)"
+          set +e
+          output="$("${auth[@]}" -p "$port" -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=20 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SERVER_USER@$SERVER_HOST" "powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded" 2>/dev/null)"
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ]; then
+            printf 'checked_utc=%s\nssh=failed\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > deploy/status/restok-live.txt
+          else
+            printf '%s\n' "$output" | sed '/^#< CLIXML$/d' > deploy/status/restok-live.txt
+            printf 'ssh=success\n' >> deploy/status/restok-live.txt
+          fi
+
+      - name: Publish safe live status
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/status/restok-live.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: record Restok live deployment state"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
