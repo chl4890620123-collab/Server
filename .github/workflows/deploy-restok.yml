@@ -1,0 +1,94 @@
+name: Deploy Restok on mini PC
+
+on:
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Force rebuild even when the deployed Restok SHA is already healthy
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "*/15 * * * *"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/deploy-restok.yml"
+      - "deploy/compose/restok.yml"
+      - "deploy/caddy/restok.Caddyfile"
+      - "deploy/runtime/restok.env.example"
+      - "deploy/scripts/deploy-restok.ps1"
+      - "deploy/scripts/check-restok-legacy-data.ps1"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: server-restok-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout Server repository
+        uses: actions/checkout@v5
+
+      - name: Protect legacy Restok data
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          .\deploy\scripts\check-restok-legacy-data.ps1
+
+      - name: Deploy Restok safely
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $force = '${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.force }}' -eq 'true'
+          if ($force) {
+            .\deploy\scripts\deploy-restok.ps1 -Force
+          } else {
+            .\deploy\scripts\deploy-restok.ps1
+          }
+
+      - name: Record deployed Restok URL
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not (Test-Path 'deploy/status/restok.txt')) {
+            throw 'Restok deployment status file was not created.'
+          }
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/status/restok.txt
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) { exit 0 }
+          git commit -m "chore: record deployed Restok URL"
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to commit Restok deployment status.' }
+          git pull --rebase origin main
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to rebase Restok deployment status.' }
+          git push origin HEAD:main
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to push Restok deployment status.' }
+
+      - name: Diagnostics on failure
+        if: failure()
+        shell: powershell
+        run: |
+          Write-Host '=== docker ps -a ==='
+          docker ps -a
+          Write-Host '=== Docker volumes matching Restok ==='
+          docker volume ls --format "{{.Name}}" | Select-String -Pattern 'restok|restock'
+          Write-Host '=== Restok database logs ==='
+          docker logs --tail 120 restok-db 2>$null
+          Write-Host '=== Restok AI logs ==='
+          docker logs --tail 120 restok-ai 2>$null
+          Write-Host '=== Restok backend logs ==='
+          docker logs --tail 200 restok-backend 2>$null
+          Write-Host '=== Restok frontend logs ==='
+          docker logs --tail 120 restok-frontend 2>$null
+          Write-Host '=== Restok Caddy logs ==='
+          docker logs --tail 120 restok-caddy 2>$null
+          Write-Host '=== Restok tunnel logs ==='
+          docker logs --tail 160 restok-public-tunnel 2>$null
