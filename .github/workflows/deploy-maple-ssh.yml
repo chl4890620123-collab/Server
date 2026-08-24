@@ -19,7 +19,7 @@ permissions:
 
 concurrency:
   group: server-maple-production
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -81,8 +81,9 @@ jobs:
           SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
         run: |
           set -euo pipefail
-          mkdir -p deploy/status "$HOME/.ssh"
+          mkdir -p "$HOME/.ssh"
           chmod 700 "$HOME/.ssh"
+          output_file="$RUNNER_TEMP/maple-ssh-output.txt"
           port="${SERVER_PORT:-22}"
           key_args=()
 
@@ -139,7 +140,7 @@ jobs:
           code=$?
           set -e
 
-          printf '%s\n' "$output" | tee deploy/status/ssh-output.txt
+          printf '%s\n' "$output" | tee "$output_file"
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
       - name: Record deployment result
@@ -148,25 +149,30 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p deploy/status
+          output_file="$RUNNER_TEMP/maple-ssh-output.txt"
           available='${{ steps.ssh.outputs.available }}'
           exit_code='${{ steps.deploy.outputs.exit_code }}'
           [ -n "$exit_code" ] || exit_code=999
           final=failure
+          connection=unavailable
           public_url=''
           maple_sha=''
 
           if [ "$available" != 'true' ]; then
             final=skipped
-          elif [ "$exit_code" = '0' ]; then
-            public_url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' deploy/status/ssh-output.txt | tail -n 1 || true)"
-            maple_sha="$(sed -n 's/^.*\[maple\] source SHA: \([0-9a-f]\{40\}\).*$/\1/p' deploy/status/ssh-output.txt | tail -n 1)"
-            if [ -n "$public_url" ] && [ -n "$maple_sha" ]; then
-              final=success
-              cat > deploy/status/maple.txt <<EOF
+          else
+            connection=success
+            if [ "$exit_code" = '0' ] && [ -f "$output_file" ]; then
+              public_url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$output_file" | tail -n 1 || true)"
+              maple_sha="$(sed -n 's/^.*\[maple\] source SHA: \([0-9a-f]\{40\}\).*$/\1/p' "$output_file" | tail -n 1)"
+              if [ -n "$public_url" ] && [ -n "$maple_sha" ]; then
+                final=success
+                cat > deploy/status/maple.txt <<EOF
           maple_sha=$maple_sha
           public_url=$public_url
           public_health=$public_url/api/health
           EOF
+              fi
             fi
           fi
 
@@ -175,7 +181,7 @@ jobs:
           run_attempt=${{ github.run_attempt }}
           event=${{ github.event_name }}
           ssh_fallback_available=$available
-          ssh_connection=$([ "$available" = 'true' ] && echo success || echo unavailable)
+          ssh_connection=$connection
           remote_exit_code=$exit_code
           deployment=$final
           EOF
@@ -184,7 +190,6 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add deploy/status/transport.txt
-          if [ -f deploy/status/ssh-output.txt ]; then git add deploy/status/ssh-output.txt; fi
           if [ -f deploy/status/maple.txt ]; then git add deploy/status/maple.txt; fi
           if ! git diff --cached --quiet; then
             git commit -m "chore: record Maple deployment result"
