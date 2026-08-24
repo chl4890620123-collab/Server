@@ -1,0 +1,130 @@
+name: Probe Restok runtime
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/probe-restok-runtime.yml"
+      - "deploy/status/restok-probe-trigger.txt"
+
+permissions:
+  contents: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Probe Windows mini PC
+        id: probe
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/status "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          port="${SERVER_PORT:-22}"
+          key_args=()
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/restok_probe_key"
+            chmod 600 "$HOME/.ssh/restok_probe_key"
+            key_args=(-i "$HOME/.ssh/restok_probe_key")
+          fi
+          if [ -n "$SERVER_PASSWORD" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SERVER_PASSWORD"
+            auth=(sshpass -e ssh "${key_args[@]}")
+          else
+            auth=(ssh "${key_args[@]}")
+          fi
+
+          cat > "$RUNNER_TEMP/probe.ps1" <<'PWSH'
+          $ErrorActionPreference = 'Continue'
+          Write-Output ('utc=' + (Get-Date).ToUniversalTime().ToString('o'))
+          Write-Output ('d_drive=' + (Test-Path 'D:\'))
+          Write-Output ('docker_cli=' + [bool](Get-Command docker -ErrorAction SilentlyContinue))
+          docker version --format 'docker_server={{.Server.Version}}' 2>&1
+
+          Write-Output '=== restok-paths ==='
+          Write-Output ('source_repo=' + (Test-Path 'C:\home\server\sources\restok\.git'))
+          Write-Output ('runtime_env=' + (Test-Path 'D:\server-data\restok\runtime\.env'))
+          Write-Output ('db_dir=' + (Test-Path 'D:\server-data\restok\mariadb'))
+          Write-Output ('uploads_dir=' + (Test-Path 'D:\server-data\restok\uploads'))
+          Write-Output ('backup_dir=' + (Test-Path 'D:\server-data\restok\backups'))
+          if (Test-Path 'D:\server-data\restok\mariadb') {
+              $count = @(Get-ChildItem 'D:\server-data\restok\mariadb' -Force -ErrorAction SilentlyContinue).Count
+              Write-Output ('db_dir_entries=' + $count)
+          }
+          if (Test-Path 'D:\server-data\restok\runtime\deployed.sha') {
+              Write-Output ('deployed_sha=' + ((Get-Content 'D:\server-data\restok\runtime\deployed.sha' -Raw).Trim()))
+          }
+
+          Write-Output '=== restok-volumes ==='
+          docker volume ls --format '{{.Name}}' 2>&1 | Select-String -Pattern 'restok|restock'
+
+          Write-Output '=== restok-containers ==='
+          docker ps -a --filter 'name=restok' --format '{{.Names}}|{{.Status}}|{{.Ports}}' 2>&1
+
+          foreach ($name in @('restok-db','restok-ai','restok-backend','restok-frontend','restok-caddy','restok-public-tunnel')) {
+              Write-Output ('=== ' + $name + '-state ===')
+              docker inspect --format '{{json .State}}' $name 2>&1
+          }
+
+          Write-Output '=== port9050 ==='
+          Get-NetTCPConnection -State Listen -LocalPort 9050 -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Output ($_.LocalAddress + ':' + $_.LocalPort + '|pid=' + $_.OwningProcess) }
+
+          Write-Output '=== local-health ==='
+          try {
+              $r = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:9050/api/auth/health' -TimeoutSec 5
+              Write-Output ('status=' + $r.StatusCode)
+              Write-Output $r.Content
+          } catch {
+              Write-Output ('health_error=' + $_.Exception.Message)
+          }
+
+          Write-Output '=== db-logs ==='
+          docker logs --tail 80 restok-db 2>&1
+          Write-Output '=== ai-logs ==='
+          docker logs --tail 80 restok-ai 2>&1
+          Write-Output '=== backend-logs ==='
+          docker logs --tail 160 restok-backend 2>&1
+          Write-Output '=== frontend-logs ==='
+          docker logs --tail 80 restok-frontend 2>&1
+          Write-Output '=== caddy-logs ==='
+          docker logs --tail 80 restok-caddy 2>&1
+          Write-Output '=== tunnel-logs ==='
+          docker logs --tail 120 restok-public-tunnel 2>&1
+          PWSH
+
+          encoded="$(iconv -f UTF-8 -t UTF-16LE "$RUNNER_TEMP/probe.ps1" | base64 -w0)"
+          set +e
+          output="$("${auth[@]}" -p "$port" -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SERVER_USER@$SERVER_HOST" "powershell.exe -NoProfile -NonInteractive -EncodedCommand $encoded" 2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output" | tee deploy/status/restok-runtime-probe.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Publish probe
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/status/restok-runtime-probe.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: record Restok runtime probe"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+          test '${{ steps.probe.outputs.exit_code }}' = '0'
