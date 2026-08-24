@@ -8,6 +8,7 @@ $ServerRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $StatusRoot = Join-Path $ServerRoot "deploy\status"
 $ErrorFile = Join-Path $StatusRoot "maple-error.txt"
 $DeployScript = Join-Path $ServerRoot "deploy\scripts\deploy-maple.ps1"
+$VerifyScript = Join-Path $ServerRoot "deploy\scripts\verify-maple-rules.py"
 $DockerRuntimeRoot = "D:\server-data\maple\runtime\docker-cli"
 $DockerPluginRoot = Join-Path $DockerRuntimeRoot "cli-plugins"
 $TunnelRuntimeRoot = "D:\server-data\maple\runtime\cloudflared"
@@ -63,6 +64,20 @@ function Get-TunnelUrl {
     finally { $ErrorActionPreference = $old }
 }
 
+function Invoke-RuleVerification {
+    if (-not (Test-Path $VerifyScript)) {
+        throw "Maple rule verification script is missing."
+    }
+    $appRunning = (docker inspect --format "{{.State.Running}}" maple-app 2>$null | Out-String).Trim()
+    if ($appRunning -ne "true") {
+        throw "Maple app is not running for rule verification."
+    }
+    Get-Content $VerifyScript -Raw | docker exec -i maple-app python -
+    if ($LASTEXITCODE -ne 0) {
+        throw "Maple fixed-rule verification failed."
+    }
+}
+
 function Test-HealthyExistingDeployment([string]$ExpectedSha) {
     if (-not (Test-Path $MarkerFile)) { return $false }
     $deployedSha = (Get-Content $MarkerFile -Raw).Trim()
@@ -89,6 +104,7 @@ function Test-HealthyExistingDeployment([string]$ExpectedSha) {
         if ($publicHealth.StatusCode -ne 200) { return $false }
     } catch { return $false }
 
+    Invoke-RuleVerification
     Write-Host "[maple] deployment already current and healthy"
     Write-Host "[maple] public URL: $publicUrl"
     Write-Host "[maple] public health: $publicUrl/api/health"
@@ -182,6 +198,7 @@ foreach ($name in @("maple-public-tunnel", "maple-caddy", "maple-app")) {
 
 try {
     & $DeployScript
+    Invoke-RuleVerification
 }
 catch {
     $failedAt = (Get-Date).ToUniversalTime().ToString("o")
