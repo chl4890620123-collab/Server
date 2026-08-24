@@ -108,7 +108,7 @@ jobs:
           fi
           echo "available=$available" >> "$GITHUB_OUTPUT"
 
-      - name: Record deployment start
+      - name: Record deployment start locally
         shell: bash
         run: |
           set -euo pipefail
@@ -124,14 +124,6 @@ jobs:
           remote_exit_code=pending
           deployment=running
           EOF
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/status/restok-transport.txt
-          if ! git diff --cached --quiet; then
-            git commit -m "chore: mark Restok deployment running"
-            git pull --rebase origin main
-            git push origin HEAD:main
-          fi
 
       - name: Run Restok deployment with native SSH
         id: deploy
@@ -289,14 +281,37 @@ jobs:
           EOF
           echo "final=$final" >> "$GITHUB_OUTPUT"
 
+          tmpdir="$(mktemp -d)"
+          cp deploy/status/restok-transport.txt "$tmpdir/restok-transport.txt"
+          if [ -f deploy/status/restok.txt ]; then cp deploy/status/restok.txt "$tmpdir/restok.txt"; fi
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/status/restok-transport.txt
-          if [ -f deploy/status/restok.txt ]; then git add deploy/status/restok.txt; fi
-          if ! git diff --cached --quiet; then
+          published=false
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            mkdir -p deploy/status
+            cp "$tmpdir/restok-transport.txt" deploy/status/restok-transport.txt
+            if [ -f "$tmpdir/restok.txt" ]; then cp "$tmpdir/restok.txt" deploy/status/restok.txt; fi
+            git add deploy/status/restok-transport.txt
+            if [ -f "$tmpdir/restok.txt" ]; then git add deploy/status/restok.txt; fi
+            if git diff --cached --quiet; then
+              published=true
+              break
+            fi
             git commit -m "chore: record Restok deployment result"
-            git pull --rebase origin main
-            git push origin HEAD:main
+            if git push origin HEAD:main; then
+              published=true
+              break
+            fi
+            echo "Restok status push raced with another deployment; retrying ($attempt/5)."
+            sleep $((attempt * 2))
+          done
+          rm -rf "$tmpdir"
+          if [ "$published" != 'true' ]; then
+            echo 'Failed to publish Restok deployment status after retries.'
+            exit 1
           fi
 
       - name: Enforce deployment result
