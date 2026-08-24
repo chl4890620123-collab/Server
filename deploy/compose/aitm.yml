@@ -1,0 +1,154 @@
+services:
+  mariadb:
+    image: mariadb:10.11
+    pull_policy: never
+    container_name: aitm-db
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    environment:
+      MARIADB_DATABASE: ${DB_NAME:?DB_NAME is required}
+      MARIADB_USER: ${DB_USER:?DB_USER is required}
+      MARIADB_PASSWORD: ${AITM_DB_PASSWORD:?AITM_DB_PASSWORD is required}
+      MARIADB_ROOT_PASSWORD: ${AITM_DB_ROOT_PASSWORD:?AITM_DB_ROOT_PASSWORD is required}
+    volumes:
+      - type: bind
+        source: ${AITM_DB_DATA_DIR:?AITM_DB_DATA_DIR is required}
+        target: /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 15s
+    networks:
+      - aitm-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  ai:
+    image: aitm-production-ai:latest
+    pull_policy: never
+    container_name: aitm-ai
+    restart: unless-stopped
+    environment:
+      RESTOK_AI_SECURE_TOKEN: ${AITM_AI_SECURE_TOKEN:?AITM_AI_SECURE_TOKEN is required}
+      BACKEND_URL: http://backend:8080
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AITM_ALLOWED_VIDEO_HOSTS: ${AITM_ALLOWED_VIDEO_HOSTS:-storage.googleapis.com}
+    volumes:
+      - type: bind
+        source: ${AITM_VIDEO_DATA_DIR:?AITM_VIDEO_DATA_DIR is required}
+        target: /app/data/videos
+        read_only: true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3).read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks:
+      - aitm-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  backend:
+    image: aitm-production-backend:latest
+    pull_policy: never
+    container_name: aitm-backend
+    restart: unless-stopped
+    depends_on:
+      mariadb:
+        condition: service_healthy
+      ai:
+        condition: service_healthy
+    environment:
+      DB_URL: jdbc:mariadb://mariadb:3306/${DB_NAME:?DB_NAME is required}?useUnicode=true&characterEncoding=UTF-8
+      DB_USERNAME: ${DB_USER:?DB_USER is required}
+      DB_PASSWORD: ${AITM_DB_PASSWORD:?AITM_DB_PASSWORD is required}
+      AI_SERVICE_URL: http://ai:8000
+      RESTOK_AI_SECURE_TOKEN: ${AITM_AI_SECURE_TOKEN:?AITM_AI_SECURE_TOKEN is required}
+      AITM_VIDEO_DIR: /app/data/videos
+      APP_DATABASE_CHARSET_MIGRATION_ENABLED: ${DB_CHARSET_MIGRATION_ENABLED:-false}
+      APP_DATABASE_CHARSET_MIGRATION_LOCK_WAIT_SECONDS: ${DB_CHARSET_MIGRATION_LOCK_WAIT_SECONDS:-10}
+    volumes:
+      - type: bind
+        source: ${AITM_VIDEO_DATA_DIR:?AITM_VIDEO_DATA_DIR is required}
+        target: /app/data/videos
+    networks:
+      - aitm-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: aitm-production-frontend:latest
+    pull_policy: never
+    container_name: aitm-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    networks:
+      - aitm-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: caddy:2.10-alpine
+    pull_policy: never
+    container_name: aitm-caddy
+    restart: unless-stopped
+    depends_on:
+      - frontend
+    ports:
+      - "127.0.0.1:${AITM_LOCAL_PORT:-9060}:8080"
+    volumes:
+      - type: bind
+        source: ${AITM_CADDYFILE:?AITM_CADDYFILE is required}
+        target: /etc/caddy/Caddyfile
+        read_only: true
+    networks:
+      - aitm-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  public-tunnel:
+    image: caddy:2.10-alpine
+    pull_policy: never
+    container_name: aitm-public-tunnel
+    restart: unless-stopped
+    depends_on:
+      - caddy
+    entrypoint: ["/usr/local/bin/cloudflared"]
+    command: ["tunnel", "--no-autoupdate", "--url", "http://caddy:8080"]
+    volumes:
+      - type: bind
+        source: ${AITM_CLOUDFLARED_BINARY:?AITM_CLOUDFLARED_BINARY is required}
+        target: /usr/local/bin/cloudflared
+        read_only: true
+    networks:
+      - aitm-internal
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  aitm-internal:
+    name: aitm-internal
