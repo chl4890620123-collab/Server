@@ -1,4 +1,4 @@
-name: Deploy Restok on mini PC
+name: Deploy Restok production
 
 on:
   workflow_dispatch:
@@ -8,8 +8,6 @@ on:
         required: false
         default: false
         type: boolean
-  schedule:
-    - cron: "*/15 * * * *"
   push:
     branches: [main]
     paths:
@@ -19,6 +17,8 @@ on:
       - "deploy/runtime/restok.env.example"
       - "deploy/scripts/deploy-restok.ps1"
       - "deploy/scripts/check-restok-legacy-data.ps1"
+  schedule:
+    - cron: "*/15 * * * *"
 
 permissions:
   contents: write
@@ -29,66 +29,189 @@ concurrency:
 
 jobs:
   deploy:
-    runs-on: [self-hosted, Windows, X64]
+    runs-on: ubuntu-latest
     timeout-minutes: 45
 
     steps:
       - name: Checkout Server repository
         uses: actions/checkout@v5
 
-      - name: Protect legacy Restok data
-        shell: powershell
+      - name: Detect existing Server SSH configuration
+        id: ssh
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          .\deploy\scripts\check-restok-legacy-data.ps1
+          set -euo pipefail
+          available=false
+          if [ -n "$SERVER_HOST" ] && [ -n "$SERVER_USER" ] && { [ -n "$SERVER_SSH_KEY" ] || [ -n "$SERVER_PASSWORD" ]; }; then
+            available=true
+          fi
+          echo "available=$available" >> "$GITHUB_OUTPUT"
 
-      - name: Deploy Restok safely
-        shell: powershell
+      - name: Record deployment start
+        shell: bash
         run: |
-          $ErrorActionPreference = 'Stop'
-          $force = '${{ github.event_name }}' -eq 'workflow_dispatch' -and '${{ inputs.force }}' -eq 'true'
-          if ($force) {
-            .\deploy\scripts\deploy-restok.ps1 -Force
-          } else {
-            .\deploy\scripts\deploy-restok.ps1
-          }
-
-      - name: Record deployed Restok URL
-        shell: powershell
-        run: |
-          $ErrorActionPreference = 'Stop'
-          if (-not (Test-Path 'deploy/status/restok.txt')) {
-            throw 'Restok deployment status file was not created.'
-          }
+          set -euo pipefail
+          mkdir -p deploy/status
+          cat > deploy/status/restok-transport.txt <<EOF
+          run_id=${{ github.run_id }}
+          run_attempt=${{ github.run_attempt }}
+          event=${{ github.event_name }}
+          ssh_available=${{ steps.ssh.outputs.available }}
+          ssh_connection=pending
+          remote_exit_code=pending
+          deployment=running
+          EOF
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add deploy/status/restok.txt
-          git diff --cached --quiet
-          if ($LASTEXITCODE -eq 0) { exit 0 }
-          git commit -m "chore: record deployed Restok URL"
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to commit Restok deployment status.' }
-          git pull --rebase origin main
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to rebase Restok deployment status.' }
-          git push origin HEAD:main
-          if ($LASTEXITCODE -ne 0) { throw 'Failed to push Restok deployment status.' }
+          git add deploy/status/restok-transport.txt
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: mark Restok deployment running"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
 
-      - name: Diagnostics on failure
-        if: failure()
-        shell: powershell
+      - name: Run Restok deployment with native SSH
+        id: deploy
+        if: steps.ssh.outputs.available == 'true'
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
         run: |
-          Write-Host '=== docker ps -a ==='
-          docker ps -a
-          Write-Host '=== Docker volumes matching Restok ==='
-          docker volume ls --format "{{.Name}}" | Select-String -Pattern 'restok|restock'
-          Write-Host '=== Restok database logs ==='
-          docker logs --tail 120 restok-db 2>$null
-          Write-Host '=== Restok AI logs ==='
-          docker logs --tail 120 restok-ai 2>$null
-          Write-Host '=== Restok backend logs ==='
-          docker logs --tail 200 restok-backend 2>$null
-          Write-Host '=== Restok frontend logs ==='
-          docker logs --tail 120 restok-frontend 2>$null
-          Write-Host '=== Restok Caddy logs ==='
-          docker logs --tail 120 restok-caddy 2>$null
-          Write-Host '=== Restok tunnel logs ==='
-          docker logs --tail 160 restok-public-tunnel 2>$null
+          set -euo pipefail
+          mkdir -p deploy/status "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          port="${SERVER_PORT:-22}"
+          key_args=()
+
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/restok_deploy_key"
+            chmod 600 "$HOME/.ssh/restok_deploy_key"
+            key_args=(-i "$HOME/.ssh/restok_deploy_key")
+          fi
+
+          if [ -n "$SERVER_PASSWORD" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SERVER_PASSWORD"
+            auth=(sshpass -e ssh "${key_args[@]}")
+          else
+            auth=(ssh "${key_args[@]}")
+          fi
+
+          cat > "$RUNNER_TEMP/restok-remote.ps1" <<'PWSH'
+          $ErrorActionPreference = 'Stop'
+          $path = 'C:\home\server\app'
+          $parent = Split-Path $path -Parent
+          New-Item -ItemType Directory -Force -Path $parent | Out-Null
+
+          if (-not (Test-Path (Join-Path $path '.git'))) {
+              if (Test-Path $path) { Remove-Item -Recurse -Force $path }
+              git clone 'https://github.com/chl4890620123-collab/Server.git' $path
+              if ($LASTEXITCODE -ne 0) { throw 'Server clone failed' }
+          }
+
+          Set-Location $path
+          git reset --hard HEAD
+          if ($LASTEXITCODE -ne 0) { throw 'Server reset failed' }
+          git clean -fd
+          if ($LASTEXITCODE -ne 0) { throw 'Server clean failed' }
+          git fetch --prune origin main
+          if ($LASTEXITCODE -ne 0) { throw 'Server fetch failed' }
+          git checkout -B main origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Server checkout failed' }
+          git reset --hard origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Server main reset failed' }
+          git clean -fd
+          if ($LASTEXITCODE -ne 0) { throw 'Server final clean failed' }
+
+          & '.\deploy\scripts\check-restok-legacy-data.ps1'
+          if (-not $?) { throw 'Restok legacy data preflight failed' }
+
+          $forceDeploy = ('${{ github.event_name }}' -ne 'schedule') -or ('${{ inputs.force }}' -eq 'true')
+          & '.\deploy\scripts\deploy-restok.ps1' -Force:$forceDeploy
+          if (-not $?) { throw 'Restok deploy script failed' }
+          PWSH
+
+          encoded="$(iconv -f UTF-8 -t UTF-16LE "$RUNNER_TEMP/restok-remote.ps1" | base64 -w0)"
+          remote_command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded"
+
+          set +e
+          output="$("${auth[@]}" -p "$port" -o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$SERVER_USER@$SERVER_HOST" "$remote_command" 2>&1)"
+          code=$?
+          set -e
+
+          printf '%s\n' "$output" | tee deploy/status/restok-ssh-output.txt
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+
+      - name: Record deployment result
+        id: record
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p deploy/status
+          available='${{ steps.ssh.outputs.available }}'
+          exit_code='${{ steps.deploy.outputs.exit_code }}'
+          [ -n "$exit_code" ] || exit_code=999
+          final=failure
+          public_url=''
+          restok_sha=''
+
+          if [ "$available" != 'true' ]; then
+            final=skipped
+          elif [ "$exit_code" = '0' ]; then
+            public_url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' deploy/status/restok-ssh-output.txt | tail -n 1 || true)"
+            restok_sha="$(sed -n 's/^.*\[restok\] source SHA: \([0-9a-f]\{40\}\).*$/\1/p' deploy/status/restok-ssh-output.txt | tail -n 1)"
+            if [ -n "$public_url" ] && [ -n "$restok_sha" ]; then
+              final=success
+              cat > deploy/status/restok.txt <<EOF
+          restok_sha=$restok_sha
+          public_url=$public_url
+          public_health=$public_url/api/auth/health
+          local_url=http://127.0.0.1:9050
+          EOF
+            fi
+          fi
+
+          cat > deploy/status/restok-transport.txt <<EOF
+          run_id=${{ github.run_id }}
+          run_attempt=${{ github.run_attempt }}
+          event=${{ github.event_name }}
+          ssh_available=$available
+          ssh_connection=$([ "$available" = 'true' ] && echo success || echo unavailable)
+          remote_exit_code=$exit_code
+          deployment=$final
+          EOF
+          echo "final=$final" >> "$GITHUB_OUTPUT"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/status/restok-transport.txt
+          if [ -f deploy/status/restok-ssh-output.txt ]; then git add deploy/status/restok-ssh-output.txt; fi
+          if [ -f deploy/status/restok.txt ]; then git add deploy/status/restok.txt; fi
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: record Restok deployment result"
+            git pull --rebase origin main
+            git push origin HEAD:main
+          fi
+
+      - name: Enforce deployment result
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ '${{ steps.ssh.outputs.available }}' != 'true' ]; then
+            echo 'Server SSH configuration is unavailable.'
+            exit 1
+          fi
+          if [ '${{ steps.record.outputs.final }}' != 'success' ]; then
+            echo 'Restok deployment or health verification failed.'
+            exit 1
+          fi
