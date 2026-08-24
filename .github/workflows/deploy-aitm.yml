@@ -49,41 +49,18 @@ jobs:
           set -euo pipefail
           aitm_sha="$(git -C aitm-source rev-parse HEAD)"
           deployed_sha="$(sed -n 's/^aitm_sha=//p' deploy/status/aitm.txt 2>/dev/null | head -n 1 || true)"
-          force=false
-          if [ '${{ github.event_name }}' != 'schedule' ] || [ '${{ inputs.force }}' = 'true' ]; then
-            force=true
-          fi
           bundle=false
-          if [ "$force" = true ] || [ -z "$deployed_sha" ] || [ "$deployed_sha" != "$aitm_sha" ]; then
+          if [ '${{ github.event_name }}' = 'workflow_dispatch' ] && [ '${{ inputs.force }}' = 'true' ]; then
+            bundle=true
+          elif [ -z "$deployed_sha" ] || [ "$deployed_sha" != "$aitm_sha" ]; then
             bundle=true
           fi
           echo "aitm_sha=$aitm_sha" >> "$GITHUB_OUTPUT"
           echo "deployed_sha=$deployed_sha" >> "$GITHUB_OUTPUT"
-          echo "force=$force" >> "$GITHUB_OUTPUT"
           echo "bundle=$bundle" >> "$GITHUB_OUTPUT"
           echo "Aitm source: $aitm_sha"
           echo "Previously deployed: ${deployed_sha:-none}"
           echo "Build and transfer image bundle: $bundle"
-
-      - name: Build Aitm images on GitHub runner
-        if: steps.plan.outputs.bundle == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker build --pull -t aitm-production-ai:latest aitm-source/demo/ai
-          docker build --pull -t aitm-production-backend:latest aitm-source/demo
-          docker build --pull -t aitm-production-frontend:latest aitm-source/front
-          docker pull mariadb:10.11
-          docker pull caddy:2.10-alpine
-          docker save \
-            aitm-production-ai:latest \
-            aitm-production-backend:latest \
-            aitm-production-frontend:latest \
-            mariadb:10.11 \
-            caddy:2.10-alpine \
-            | gzip -1 > "$RUNNER_TEMP/aitm-images.tar.gz"
-          test -s "$RUNNER_TEMP/aitm-images.tar.gz"
-          ls -lh "$RUNNER_TEMP/aitm-images.tar.gz"
 
       - name: Detect Server SSH configuration
         id: ssh
@@ -113,6 +90,7 @@ jobs:
           aitm_sha=${{ steps.plan.outputs.aitm_sha }}
           image_bundle=${{ steps.plan.outputs.bundle }}
           ssh_available=${{ steps.ssh.outputs.available }}
+          build=pending
           ssh_connection=pending
           remote_exit_code=pending
           deployment=running
@@ -126,9 +104,30 @@ jobs:
             git push origin HEAD:main
           fi
 
+      - name: Build Aitm images on GitHub runner
+        id: build
+        if: steps.plan.outputs.bundle == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build --pull -t aitm-production-ai:latest aitm-source/demo/ai
+          docker build --pull -t aitm-production-backend:latest aitm-source/demo
+          docker build --pull -t aitm-production-frontend:latest aitm-source/front
+          docker pull mariadb:10.11
+          docker pull caddy:2.10-alpine
+          docker save \
+            aitm-production-ai:latest \
+            aitm-production-backend:latest \
+            aitm-production-frontend:latest \
+            mariadb:10.11 \
+            caddy:2.10-alpine \
+            | gzip -1 > "$RUNNER_TEMP/aitm-images.tar.gz"
+          test -s "$RUNNER_TEMP/aitm-images.tar.gz"
+          ls -lh "$RUNNER_TEMP/aitm-images.tar.gz"
+
       - name: Run Aitm deployment with native SSH
         id: deploy
-        if: steps.ssh.outputs.available == 'true'
+        if: steps.ssh.outputs.available == 'true' && (steps.build.outcome == 'success' || steps.build.outcome == 'skipped')
         shell: bash
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
@@ -161,11 +160,11 @@ jobs:
             transfer=(scp "${key_args[@]}")
           fi
 
-          ssh_options=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+          ssh_options=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
           "${auth[@]}" -p "$port" "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "powershell.exe -NoProfile -NonInteractive -Command \"New-Item -ItemType Directory -Force -Path 'C:\\home\\server' | Out-Null\""
 
           if [ '${{ steps.plan.outputs.bundle }}' = 'true' ]; then
-            "${transfer[@]}" -P "$port" -o ConnectTimeout=30 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+            "${transfer[@]}" -P "$port" -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
               "$RUNNER_TEMP/aitm-images.tar.gz" \
               "$SERVER_USER@$SERVER_HOST:C:/home/server/aitm-images.tar.gz"
           fi
@@ -233,6 +232,7 @@ jobs:
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
 
       - name: Record deployment result
+        if: always()
         id: record
         shell: bash
         run: |
@@ -240,17 +240,21 @@ jobs:
           mkdir -p deploy/status
           output_file="$RUNNER_TEMP/aitm-ssh-output.txt"
           available='${{ steps.ssh.outputs.available }}'
+          build_outcome='${{ steps.build.outcome }}'
+          deploy_outcome='${{ steps.deploy.outcome }}'
           exit_code='${{ steps.deploy.outputs.exit_code }}'
           [ -n "$exit_code" ] || exit_code=999
           final=failure
-          connection=unavailable
+          connection=not_attempted
           public_url=''
           aitm_sha=''
 
           if [ "$available" != 'true' ]; then
             final=skipped
-          else
-            connection=success
+          elif [ "$build_outcome" = 'failure' ]; then
+            final=failure
+          elif [ "$deploy_outcome" = 'success' ]; then
+            connection=attempted
             if [ "$exit_code" = '0' ] && [ -f "$output_file" ]; then
               public_url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$output_file" | tail -n 1 || true)"
               aitm_sha="$(sed -n 's/^.*\[aitm\] source SHA: \([0-9a-f]\{40\}\).*$/\1/p' "$output_file" | tail -n 1)"
@@ -264,6 +268,8 @@ jobs:
           EOF
               fi
             fi
+          elif [ "$deploy_outcome" = 'failure' ]; then
+            connection=attempted
           fi
 
           cat > deploy/status/aitm-transport.txt <<EOF
@@ -273,6 +279,7 @@ jobs:
           aitm_sha=${{ steps.plan.outputs.aitm_sha }}
           image_bundle=${{ steps.plan.outputs.bundle }}
           ssh_available=$available
+          build=$build_outcome
           ssh_connection=$connection
           remote_exit_code=$exit_code
           deployment=$final
@@ -290,14 +297,11 @@ jobs:
           fi
 
       - name: Enforce deployment result
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
-          if [ '${{ steps.ssh.outputs.available }}' != 'true' ]; then
-            echo 'Server SSH configuration is unavailable.'
-            exit 1
-          fi
           if [ '${{ steps.record.outputs.final }}' != 'success' ]; then
-            echo 'Aitm deployment or health verification failed.'
+            echo 'Aitm build, deployment, or health verification failed.'
             exit 1
           fi
