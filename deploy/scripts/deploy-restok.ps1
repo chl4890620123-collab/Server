@@ -53,6 +53,42 @@ function Get-RuntimeValue([string]$Key, [string]$DefaultValue) {
     return $DefaultValue
 }
 
+function Initialize-IsolatedDockerCliConfig {
+    $sourceRoot = Join-Path $env:USERPROFILE ".docker"
+    $targetRoot = Join-Path $RuntimeRoot "docker-cli"
+
+    if (Test-Path $targetRoot) {
+        Remove-Item -Recurse -Force $targetRoot
+    }
+    New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
+
+    if (Test-Path $sourceRoot) {
+        Copy-Item -Path (Join-Path $sourceRoot "*") -Destination $targetRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    $configPath = Join-Path $targetRoot "config.json"
+    if (Test-Path $configPath) {
+        $config = Get-Content $configPath -Raw | ConvertFrom-Json
+        if ($config.PSObject.Properties.Name -contains "credsStore") {
+            $config.PSObject.Properties.Remove("credsStore")
+        }
+        if ($config.PSObject.Properties.Name -contains "credHelpers") {
+            $config.PSObject.Properties.Remove("credHelpers")
+        }
+        $config | ConvertTo-Json -Depth 32 | Set-Content -Path $configPath -Encoding utf8
+    } else {
+        '{"auths":{}}' | Set-Content -Path $configPath -Encoding ascii
+    }
+
+    $env:DOCKER_CONFIG = $targetRoot
+    docker version *> $null
+    if ($LASTEXITCODE -ne 0) {
+        throw "Isolated Docker CLI configuration cannot reach Docker Desktop."
+    }
+
+    Write-Host "[restok] using isolated Docker CLI config without desktop credential helper"
+}
+
 function Get-TunnelUrl {
     $oldPreference = $ErrorActionPreference
     $ErrorActionPreference = "SilentlyContinue"
@@ -236,6 +272,8 @@ $env:RESTOK_DB_DATA_DIR = ($DbDataRoot -replace "\\", "/")
 $env:RESTOK_UPLOAD_DATA_DIR = ($UploadRoot -replace "\\", "/")
 $env:RESTOK_CADDYFILE = ($CaddyFile -replace "\\", "/")
 $env:RESTOK_CLOUDFLARED_BINARY = ($CloudflaredBinary -replace "\\", "/")
+
+Initialize-IsolatedDockerCliConfig
 
 Write-Host "[restok] validating production compose"
 docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile config *> $null
