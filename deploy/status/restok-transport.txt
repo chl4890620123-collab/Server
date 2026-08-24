@@ -1,8 +1,8 @@
-run_id=32790225852
+run_id=32791495371
 run_attempt=1
-event=push
+event=schedule
 restok_sha=ad6cbb6d1ac760994050118867783b26b64c671d
-image_bundle=true
+image_bundle=false
 ssh_available=true
 ssh_connection=success
 remote_exit_code=0
