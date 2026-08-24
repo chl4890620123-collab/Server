@@ -57,7 +57,6 @@ if (-not (Test-Path $RuntimeEnv)) {
     @"
 MAPLE_LOCAL_PORT=9040
 ADMIN_TOKEN=$(New-SecretValue)
-DEFAULT_FEE_RATE=0.05
 CORS_ORIGINS=
 DB_NAME=maple_craft
 DB_USER=maple_app
@@ -74,7 +73,6 @@ if (-not $envMap.ContainsKey("MAPLE_LOCAL_PORT") -or [string]::IsNullOrWhiteSpac
     $legacyPort = if ($envMap.ContainsKey("APP_PORT") -and -not [string]::IsNullOrWhiteSpace($envMap["APP_PORT"])) { $envMap["APP_PORT"] } else { "9040" }
     Add-EnvSetting $RuntimeEnv $envMap "MAPLE_LOCAL_PORT" $legacyPort
 }
-Add-EnvSetting $RuntimeEnv $envMap "DEFAULT_FEE_RATE" "0.05"
 Add-EnvSetting $RuntimeEnv $envMap "DB_NAME" "maple_craft"
 Add-EnvSetting $RuntimeEnv $envMap "DB_USER" "maple_app"
 
@@ -191,10 +189,25 @@ if ([int]$catalogMeta.total_recipe_count -lt 50) {
     throw "Meisterville catalog validation failed: recipe count is too small."
 }
 
-$priceProbe = Invoke-RestMethod -Method Get -Uri "$publicUrl/api/market-prices?category_key=mining" -TimeoutSec 10
-if (@($priceProbe).Count -lt 1) {
-    throw "Market price API validation failed."
+$config = Invoke-RestMethod -Method Get -Uri "$publicUrl/api/config" -TimeoutSec 10
+if ([double]$config.game_rules.auction_fee_rates.standard -ne 0.05) { throw "Standard auction fee rule must be 5%." }
+if ([double]$config.game_rules.auction_fee_rates.pc_room_receive -ne 0.03) { throw "PC room auction fee rule must be 3%." }
+if ([double]$config.game_rules.guild_shop_discount_rate -ne 0.04) { throw "Guild shop discount rule must be 4%." }
+
+$fixedShop = @(Invoke-RestMethod -Method Get -Uri "$publicUrl/api/meister/fixed-shop-prices" -TimeoutSec 10)
+if ($fixedShop.Count -lt 10) { throw "Fixed Meisterville shop catalog is unexpectedly small." }
+$midPolish = $fixedShop | Where-Object { $_.item_name -eq "중급 연마제" } | Select-Object -First 1
+$topPolish = $fixedShop | Where-Object { $_.item_name -eq "최고급 연마제" } | Select-Object -First 1
+if (-not $midPolish -or [int]$midPolish.regular_price -ne 5000 -or [int]$midPolish.guild_price -ne 4800) {
+    throw "Mid-grade polishing agent fixed price validation failed."
 }
+if (-not $topPolish -or [int]$topPolish.regular_price -ne 50000 -or [int]$topPolish.guild_price -ne 48000) {
+    throw "Top-grade polishing agent fixed price validation failed."
+}
+
+$priceProbe = @(Invoke-RestMethod -Method Get -Uri "$publicUrl/api/market-prices?category_key=mining" -TimeoutSec 10)
+if ($priceProbe.Count -lt 1) { throw "Market price API validation failed." }
+if ($priceProbe.item_name -contains "중급 연마제") { throw "Fixed shop item leaked into variable market-price editor." }
 
 $MapleSha | Set-Content -Path $MarkerFile -Encoding ascii
 $verifiedAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -212,3 +225,4 @@ Write-Host "[maple] public health: $publicHealth"
 Write-Host "[maple] source SHA: $MapleSha"
 Write-Host "[maple] Meisterville categories: $($categoryKeys -join ', ')"
 Write-Host "[maple] Meisterville recipes: $($catalogMeta.total_recipe_count)"
+Write-Host "[maple] fixed rules verified: fee 5%/3%, guild shop 4%, fixed shop items $($fixedShop.Count)"

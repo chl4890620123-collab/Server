@@ -1,17 +1,7 @@
-name: Deploy Maple production
+name: Deploy Maple manually on self-hosted runner
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - ".github/workflows/deploy-maple.yml"
-      - "deploy/compose/maple.yml"
-      - "deploy/scripts/deploy-maple.ps1"
-      - "deploy/caddy/**"
-      - "deploy/runtime/maple.env.example"
-  schedule:
-    - cron: "*/15 * * * *"
 
 permissions:
   contents: write
@@ -27,39 +17,30 @@ jobs:
 
     steps:
       - name: Checkout Server repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Deploy Maple on mini PC
+      - name: Force deploy Maple on mini PC
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-          .\deploy\scripts\deploy-maple.ps1
+          .\deploy\scripts\run-maple-deploy.ps1 -Force
 
       - name: Record public deployment URL
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'
-
           if (-not (Test-Path 'deploy/status/maple.txt')) {
             throw 'Maple deployment status file was not created.'
           }
-
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add deploy/status/maple.txt
-
           git diff --cached --quiet
-          if ($LASTEXITCODE -eq 0) {
-            Write-Host 'Maple deployment status is already current.'
-            exit 0
-          }
-
+          if ($LASTEXITCODE -eq 0) { exit 0 }
           git commit -m "chore: record deployed Maple URL"
           if ($LASTEXITCODE -ne 0) { throw 'Failed to commit Maple deployment status.' }
-
           git pull --rebase origin main
           if ($LASTEXITCODE -ne 0) { throw 'Failed to rebase Maple deployment status.' }
-
           git push origin HEAD:main
           if ($LASTEXITCODE -ne 0) { throw 'Failed to push Maple deployment status.' }
 

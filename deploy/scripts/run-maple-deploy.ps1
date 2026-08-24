@@ -1,3 +1,7 @@
+param(
+    [switch]$Force
+)
+
 $ErrorActionPreference = "Stop"
 
 $ServerRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
@@ -8,6 +12,9 @@ $DockerRuntimeRoot = "D:\server-data\maple\runtime\docker-cli"
 $DockerPluginRoot = Join-Path $DockerRuntimeRoot "cli-plugins"
 $TunnelRuntimeRoot = "D:\server-data\maple\runtime\cloudflared"
 $CloudflaredBinary = Join-Path $TunnelRuntimeRoot "cloudflared"
+$MapleSourceRoot = "C:\home\server\sources\maple"
+$RuntimeEnv = "D:\server-data\maple\runtime\.env"
+$MarkerFile = "D:\server-data\maple\runtime\deployed.sha"
 
 function Get-ContainerLogsSafe([string]$Name, [int]$Tail = 80) {
     $old = $ErrorActionPreference
@@ -28,10 +35,65 @@ function Get-ContainerInspectSafe([string]$Name) {
     try {
         $exists = (docker ps -a --filter "name=^/$Name$" --format "{{.Names}}" 2>$null | Out-String).Trim()
         if ($exists -ne $Name) { return "<container not created: $Name>" }
-        $state = (docker inspect --format "state={{json .State}}`ncmd={{json .Config.Cmd}}`nentrypoint={{json .Config.Entrypoint}}" $Name 2>&1 | Out-String)
-        return $state
+        return (docker inspect --format "state={{json .State}}`ncmd={{json .Config.Cmd}}`nentrypoint={{json .Config.Entrypoint}}" $Name 2>&1 | Out-String)
     } catch { return "<failed to inspect: $Name>" }
     finally { $ErrorActionPreference = $old }
+}
+
+function Get-RuntimeValue([string]$Key, [string]$DefaultValue) {
+    if (-not (Test-Path $RuntimeEnv)) { return $DefaultValue }
+    foreach ($line in Get-Content $RuntimeEnv) {
+        $trimmed = $line.Trim()
+        if ($trimmed.StartsWith("$Key=")) {
+            return ($trimmed -split "=", 2)[1]
+        }
+    }
+    return $DefaultValue
+}
+
+function Get-TunnelUrl {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = "SilentlyContinue"
+    try {
+        $logs = (cmd.exe /d /s /c "docker logs maple-public-tunnel 2>&1" | Out-String)
+        $matches = [regex]::Matches($logs, 'https://[a-z0-9-]+\.trycloudflare\.com')
+        if ($matches.Count -gt 0) { return $matches[$matches.Count - 1].Value }
+        return $null
+    } catch { return $null }
+    finally { $ErrorActionPreference = $old }
+}
+
+function Test-HealthyExistingDeployment([string]$ExpectedSha) {
+    if (-not (Test-Path $MarkerFile)) { return $false }
+    $deployedSha = (Get-Content $MarkerFile -Raw).Trim()
+    if ($deployedSha -ne $ExpectedSha) { return $false }
+
+    $port = Get-RuntimeValue "MAPLE_LOCAL_PORT" "9040"
+    try {
+        $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/api/health" -TimeoutSec 5
+        if ($response.StatusCode -ne 200) { return $false }
+    } catch { return $false }
+
+    $dbHealth = (docker inspect --format "{{.State.Health.Status}}" maple-db 2>$null | Out-String).Trim()
+    $appHealth = (docker inspect --format "{{.State.Health.Status}}" maple-app 2>$null | Out-String).Trim()
+    $caddyRunning = (docker inspect --format "{{.State.Running}}" maple-caddy 2>$null | Out-String).Trim()
+    $tunnelRunning = (docker inspect --format "{{.State.Running}}" maple-public-tunnel 2>$null | Out-String).Trim()
+    if ($dbHealth -ne "healthy" -or $appHealth -ne "healthy" -or $caddyRunning -ne "true" -or $tunnelRunning -ne "true") {
+        return $false
+    }
+
+    $publicUrl = Get-TunnelUrl
+    if ([string]::IsNullOrWhiteSpace($publicUrl)) { return $false }
+    try {
+        $publicHealth = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/api/health" -TimeoutSec 10
+        if ($publicHealth.StatusCode -ne 200) { return $false }
+    } catch { return $false }
+
+    Write-Host "[maple] deployment already current and healthy"
+    Write-Host "[maple] public URL: $publicUrl"
+    Write-Host "[maple] public health: $publicUrl/api/health"
+    Write-Host "[maple] source SHA: $ExpectedSha"
+    return $true
 }
 
 New-Item -ItemType Directory -Force -Path $StatusRoot | Out-Null
@@ -76,6 +138,16 @@ if ($LASTEXITCODE -ne 0) { throw "Docker engine is not reachable." }
 docker compose version *> $null
 if ($LASTEXITCODE -ne 0) { throw "Docker Compose is not available." }
 
+if (-not $Force -and (Test-Path (Join-Path $MapleSourceRoot ".git"))) {
+    Write-Host "[maple] checking whether a new Maple revision exists"
+    git -C $MapleSourceRoot fetch --prune origin main *> $null
+    if ($LASTEXITCODE -ne 0) { throw "Failed to check latest Maple revision." }
+    $latestSha = (git -C $MapleSourceRoot rev-parse origin/main | Out-String).Trim()
+    if ($latestSha -and (Test-HealthyExistingDeployment $latestSha)) {
+        return
+    }
+}
+
 New-Item -ItemType Directory -Force -Path $TunnelRuntimeRoot | Out-Null
 $download = $true
 if (Test-Path $CloudflaredBinary) {
@@ -116,7 +188,6 @@ catch {
     $message = $_.Exception.Message
     Write-Host "=== MAPLE DEPLOYMENT FAILURE ==="
     Write-Host "message=$message"
-
     Start-Sleep -Seconds 3
 
     $old = $ErrorActionPreference

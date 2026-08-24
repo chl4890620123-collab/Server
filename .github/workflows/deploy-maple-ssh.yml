@@ -1,4 +1,4 @@
-name: Deploy Maple via existing SSH fallback
+name: Deploy Maple production
 
 on:
   workflow_dispatch:
@@ -10,12 +10,15 @@ on:
       - "deploy/scripts/deploy-maple.ps1"
       - "deploy/compose/maple.yml"
       - "deploy/caddy/**"
+      - "deploy/runtime/maple.env.example"
+  schedule:
+    - cron: "*/15 * * * *"
 
 permissions:
   contents: write
 
 concurrency:
-  group: server-maple-ssh-fallback
+  group: server-maple-production
   cancel-in-progress: true
 
 jobs:
@@ -25,7 +28,7 @@ jobs:
 
     steps:
       - name: Checkout Server repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Detect existing Server SSH configuration
         id: ssh
@@ -51,6 +54,7 @@ jobs:
           cat > deploy/status/transport.txt <<EOF
           run_id=${{ github.run_id }}
           run_attempt=${{ github.run_attempt }}
+          event=${{ github.event_name }}
           ssh_fallback_available=${{ steps.ssh.outputs.available }}
           ssh_connection=pending
           remote_exit_code=pending
@@ -104,9 +108,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $parent | Out-Null
 
           if (-not (Test-Path (Join-Path $path '.git'))) {
-              if (Test-Path $path) {
-                  Remove-Item -Recurse -Force $path
-              }
+              if (Test-Path $path) { Remove-Item -Recurse -Force $path }
               git clone 'https://github.com/chl4890620123-collab/Server.git' $path
               if ($LASTEXITCODE -ne 0) { throw 'Server clone failed' }
           }
@@ -125,7 +127,8 @@ jobs:
           git clean -fd
           if ($LASTEXITCODE -ne 0) { throw 'Server final clean failed' }
 
-          & '.\deploy\scripts\run-maple-deploy.ps1'
+          $forceDeploy = '${{ github.event_name }}' -ne 'schedule'
+          & '.\deploy\scripts\run-maple-deploy.ps1' -Force:$forceDeploy
           PWSH
 
           encoded="$(iconv -f UTF-8 -t UTF-16LE "$RUNNER_TEMP/maple-remote.ps1" | base64 -w0)"
@@ -157,7 +160,7 @@ jobs:
           elif [ "$exit_code" = '0' ]; then
             public_url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' deploy/status/ssh-output.txt | tail -n 1 || true)"
             maple_sha="$(sed -n 's/^.*\[maple\] source SHA: \([0-9a-f]\{40\}\).*$/\1/p' deploy/status/ssh-output.txt | tail -n 1)"
-            if [ -n "$public_url" ]; then
+            if [ -n "$public_url" ] && [ -n "$maple_sha" ]; then
               final=success
               cat > deploy/status/maple.txt <<EOF
           maple_sha=$maple_sha
@@ -170,6 +173,7 @@ jobs:
           cat > deploy/status/transport.txt <<EOF
           run_id=${{ github.run_id }}
           run_attempt=${{ github.run_attempt }}
+          event=${{ github.event_name }}
           ssh_fallback_available=$available
           ssh_connection=$([ "$available" = 'true' ] && echo success || echo unavailable)
           remote_exit_code=$exit_code
@@ -193,10 +197,10 @@ jobs:
         run: |
           set -euo pipefail
           if [ '${{ steps.ssh.outputs.available }}' != 'true' ]; then
-            echo 'Existing SSH configuration is unavailable; self-hosted runner remains the deployment path.'
+            echo 'Server SSH configuration is unavailable.'
             exit 1
           fi
           if [ '${{ steps.record.outputs.final }}' != 'success' ]; then
-            echo 'Maple deployment or public URL verification failed.'
+            echo 'Maple deployment or health verification failed.'
             exit 1
           fi

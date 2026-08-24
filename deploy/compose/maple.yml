@@ -45,7 +45,6 @@ services:
       DB_USER: ${DB_USER:?DB_USER is required}
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN is required}
-      DEFAULT_FEE_RATE: ${DEFAULT_FEE_RATE:-0.05}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
     command:
       - sh
