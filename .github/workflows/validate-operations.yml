@@ -30,7 +30,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if grep -RInE 'SERVER_(HOST|USER|PORT|SSH_KEY|PASSWORD)|ssh-action|sshpass|runs-on:.*self-hosted' .github/workflows; then
+          if grep -RInE \
+            --exclude='validate-operations.yml' \
+            'SERVER_(HOST|USER|PORT|SSH_KEY|PASSWORD)|ssh-action|sshpass|runs-on:.*self-hosted' \
+            .github/workflows; then
             echo 'Server workflows must not connect to or execute on the production mini PC.' >&2
             exit 1
           fi
