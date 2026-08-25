@@ -189,13 +189,11 @@ if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary).Length
 }
 $env:MAPLE_CLOUDFLARED_BINARY = ($CloudflaredBinary -replace "\\", "/")
 
-foreach ($name in @("maple-public-tunnel", "maple-caddy", "maple-app")) {
-    $exists = (docker ps -a --filter "name=^/$name$" --format "{{.Names}}" 2>$null | Out-String).Trim()
-    if ($exists -eq $name) {
-        Write-Host "[maple] recreating $name"
-        docker rm -f $name *> $null
-        if ($LASTEXITCODE -ne 0) { throw "Failed to remove stale container: $name" }
-    }
+$existingPublicUrl = Get-TunnelUrl
+if ([string]::IsNullOrWhiteSpace($existingPublicUrl)) {
+    Write-Host "[maple] no live public tunnel found; compose will create one if needed"
+} else {
+    Write-Host "[maple] preserving existing public URL: $existingPublicUrl"
 }
 
 try {
