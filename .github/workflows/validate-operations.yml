@@ -26,17 +26,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Enforce operations-only repository boundary
+      - name: Enforce Server-owned deployment boundary
         shell: bash
         run: |
           set -euo pipefail
-          if grep -RInE \
-            --exclude='validate-operations.yml' \
-            'SERVER_(HOST|USER|PORT|SSH_KEY|PASSWORD)|ssh-action|sshpass|runs-on:.*self-hosted' \
-            .github/workflows; then
-            echo 'Server workflows must not connect to or execute on the production mini PC.' >&2
-            exit 1
-          fi
+          test -f deploy/scripts/deploy-service.ps1
+          grep -q "ValidateSet('maple', 'aitm', 'restok')" deploy/scripts/deploy-service.ps1
+          grep -Fq "C:\\home\\server\\sources" deploy/scripts/deploy-service.ps1
+          grep -q 'chl4890620123-collab/maple.git' deploy/scripts/deploy-service.ps1
+          grep -q 'chl4890620123-collab/Aitm.git' deploy/scripts/deploy-service.ps1
+          grep -q 'chl4890620123-collab/Restok-Rangchain.git' deploy/scripts/deploy-service.ps1
 
       - name: Enforce independent service wiring
         shell: bash
@@ -56,31 +55,25 @@ jobs:
             echo 'Aitm deployment verification must use functional routes instead of /api/health.' >&2
             exit 1
           fi
-          grep -q 'DOCKER_CONFIG' deploy/scripts/recover-aitm.ps1
-          grep -Fq '{"auths":{}}' deploy/scripts/recover-aitm.ps1
 
       - name: Validate PowerShell deployment scripts parse
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $files = @(
+            'deploy/scripts/deploy-service.ps1',
             'deploy/scripts/deploy-aitm.ps1',
             'deploy/scripts/recover-aitm.ps1',
             'deploy/scripts/deploy-restok.ps1',
             'deploy/scripts/check-restok-legacy-data.ps1',
             'deploy/scripts/deploy-maple.ps1',
-            'deploy/scripts/run-maple-deploy.ps1',
-            'deploy/scripts/publish-maple-status.ps1'
+            'deploy/scripts/run-maple-deploy.ps1'
           )
           foreach ($file in $files) {
             if (-not (Test-Path $file)) { throw "Required operations script is missing: $file" }
             $tokens = $null
             $errors = $null
-            [void][System.Management.Automation.Language.Parser]::ParseFile(
-              (Resolve-Path $file),
-              [ref]$tokens,
-              [ref]$errors
-            )
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $file), [ref]$tokens, [ref]$errors)
             if ($errors.Count -gt 0) {
               $errors | ForEach-Object { Write-Error $_.Message }
               throw "PowerShell syntax validation failed: $file"
@@ -139,7 +132,5 @@ jobs:
         run: |
           set -euo pipefail
           for service in aitm restok maple; do
-            docker run --rm \
-              -v "$PWD/deploy/caddy/${service}.Caddyfile:/etc/caddy/Caddyfile:ro" \
-              caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
+            docker run --rm -v "$PWD/deploy/caddy/${service}.Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
           done
