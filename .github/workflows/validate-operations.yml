@@ -43,7 +43,7 @@ jobs:
         run: |
           set -euo pipefail
           if grep -RInE 'RESTOK_(DB|AI)|restok\.ai|X-RESTOK-AI-TOKEN' \
-            deploy/compose/aitm.yml deploy/runtime/aitm.env.example deploy/scripts/deploy-aitm.ps1; then
+            deploy/compose/aitm.yml deploy/runtime/aitm.env.example deploy/scripts/deploy-aitm.ps1 deploy/scripts/recover-aitm.ps1; then
             echo 'Aitm operations files must not depend on Restok runtime names.' >&2
             exit 1
           fi
@@ -56,6 +56,8 @@ jobs:
             echo 'Aitm deployment verification must use functional routes instead of /api/health.' >&2
             exit 1
           fi
+          grep -q 'DOCKER_CONFIG' deploy/scripts/recover-aitm.ps1
+          grep -q '\{"auths":\{\}\}' deploy/scripts/recover-aitm.ps1
 
       - name: Validate PowerShell deployment scripts parse
         shell: pwsh
@@ -63,6 +65,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $files = @(
             'deploy/scripts/deploy-aitm.ps1',
+            'deploy/scripts/recover-aitm.ps1',
             'deploy/scripts/deploy-restok.ps1',
             'deploy/scripts/check-restok-legacy-data.ps1',
             'deploy/scripts/deploy-maple.ps1',
