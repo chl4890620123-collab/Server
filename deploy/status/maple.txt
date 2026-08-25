@@ -1,3 +1,0 @@
-maple_sha=e5abb57b69911360b5d9158b6b7752179ebecaba
-public_url=https://findarticles-partnerships-honor-hans.trycloudflare.com
-local_url=http://127.0.0.1:9040
