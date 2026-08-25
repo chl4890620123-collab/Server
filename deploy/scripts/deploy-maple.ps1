@@ -141,16 +141,16 @@ Write-Host "[maple] starting local-runtime containers"
 docker compose --env-file $RuntimeEnv -p maple-production -f $ComposeFile up -d --remove-orphans
 if ($LASTEXITCODE -ne 0) { throw "Maple docker compose deployment failed." }
 
-$localHealth = "http://127.0.0.1:$localPort/api/health"
+$localProbe = "http://127.0.0.1:$localPort/api/meister/meta"
 $localReady = $false
 for ($attempt = 1; $attempt -le 48; $attempt++) {
     try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri $localHealth -TimeoutSec 5
-        if ($response.StatusCode -eq 200) { $localReady = $true; break }
+        $meta = Invoke-RestMethod -Method Get -Uri $localProbe -TimeoutSec 5
+        if ([int]$meta.total_recipe_count -ge 50) { $localReady = $true; break }
     } catch {}
     Start-Sleep -Seconds 5
 }
-if (-not $localReady) { throw "Maple local health check failed: $localHealth" }
+if (-not $localReady) { throw "Maple local functional check failed: $localProbe" }
 
 Write-Host "[maple] waiting for public preview URL"
 $publicUrl = $null
@@ -162,16 +162,16 @@ for ($attempt = 1; $attempt -le 36; $attempt++) {
 }
 if (-not $publicUrl) { throw "Cloudflare Quick Tunnel did not provide a public URL." }
 
-$publicHealth = "$publicUrl/api/health"
+$publicProbe = "$publicUrl/api/meister/meta"
 $publicReady = $false
 for ($attempt = 1; $attempt -le 24; $attempt++) {
     try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri $publicHealth -TimeoutSec 10
-        if ($response.StatusCode -eq 200) { $publicReady = $true; break }
+        $meta = Invoke-RestMethod -Method Get -Uri $publicProbe -TimeoutSec 10
+        if ([int]$meta.total_recipe_count -ge 50) { $publicReady = $true; break }
     } catch {}
     Start-Sleep -Seconds 5
 }
-if (-not $publicReady) { throw "Public Maple health check failed: $publicHealth" }
+if (-not $publicReady) { throw "Public Maple functional check failed: $publicProbe" }
 
 $root = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/" -TimeoutSec 10
 if ($root.StatusCode -ne 200 -or $root.Content -notmatch "Maple Meisterville Analytics") {
@@ -201,14 +201,12 @@ $verifiedAt = (Get-Date).ToUniversalTime().ToString("o")
 @"
 maple_sha=$MapleSha
 public_url=$publicUrl
-public_health=$publicHealth
 local_url=http://127.0.0.1:$localPort
 verified_at_utc=$verifiedAt
 "@ | Set-Content -Path $StatusFile -Encoding ascii
 
 Write-Host "[maple] deployment complete"
 Write-Host "[maple] public URL: $publicUrl"
-Write-Host "[maple] public health: $publicHealth"
 Write-Host "[maple] source SHA: $MapleSha"
 Write-Host "[maple] Meisterville categories: $($categoryKeys -join ', ')"
 Write-Host "[maple] Meisterville recipes: $($catalogMeta.total_recipe_count)"

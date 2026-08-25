@@ -162,7 +162,7 @@ jobs:
                 cat > deploy/status/maple.txt <<EOF
           maple_sha=$maple_sha
           public_url=$public_url
-          public_health=$public_url/api/health
+          local_url=http://127.0.0.1:9040
           EOF
               fi
             fi
@@ -221,6 +221,6 @@ jobs:
             exit 1
           fi
           if [ '${{ steps.record.outputs.final }}' != 'success' ]; then
-            echo 'Maple deployment or health verification failed.'
+            echo 'Maple deployment or functional verification failed.'
             exit 1
           fi

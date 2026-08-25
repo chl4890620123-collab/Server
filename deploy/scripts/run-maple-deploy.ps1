@@ -78,36 +78,37 @@ function Invoke-RuleVerification {
     }
 }
 
-function Test-HealthyExistingDeployment([string]$ExpectedSha) {
+function Test-ReadyExistingDeployment([string]$ExpectedSha) {
     if (-not (Test-Path $MarkerFile)) { return $false }
     $deployedSha = (Get-Content $MarkerFile -Raw).Trim()
     if ($deployedSha -ne $ExpectedSha) { return $false }
 
     $port = Get-RuntimeValue "MAPLE_LOCAL_PORT" "9040"
     try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/api/health" -TimeoutSec 5
-        if ($response.StatusCode -ne 200) { return $false }
+        $meta = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$port/api/meister/meta" -TimeoutSec 5
+        $root = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$port/" -TimeoutSec 5
+        if ([int]$meta.total_recipe_count -lt 50 -or $root.StatusCode -ne 200) { return $false }
     } catch { return $false }
 
     $dbHealth = (docker inspect --format "{{.State.Health.Status}}" maple-db 2>$null | Out-String).Trim()
-    $appHealth = (docker inspect --format "{{.State.Health.Status}}" maple-app 2>$null | Out-String).Trim()
+    $appRunning = (docker inspect --format "{{.State.Running}}" maple-app 2>$null | Out-String).Trim()
     $caddyRunning = (docker inspect --format "{{.State.Running}}" maple-caddy 2>$null | Out-String).Trim()
     $tunnelRunning = (docker inspect --format "{{.State.Running}}" maple-public-tunnel 2>$null | Out-String).Trim()
-    if ($dbHealth -ne "healthy" -or $appHealth -ne "healthy" -or $caddyRunning -ne "true" -or $tunnelRunning -ne "true") {
+    if ($dbHealth -ne "healthy" -or $appRunning -ne "true" -or $caddyRunning -ne "true" -or $tunnelRunning -ne "true") {
         return $false
     }
 
     $publicUrl = Get-TunnelUrl
     if ([string]::IsNullOrWhiteSpace($publicUrl)) { return $false }
     try {
-        $publicHealth = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/api/health" -TimeoutSec 10
-        if ($publicHealth.StatusCode -ne 200) { return $false }
+        $publicMeta = Invoke-RestMethod -Method Get -Uri "$publicUrl/api/meister/meta" -TimeoutSec 10
+        $publicRoot = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/" -TimeoutSec 10
+        if ([int]$publicMeta.total_recipe_count -lt 50 -or $publicRoot.StatusCode -ne 200) { return $false }
     } catch { return $false }
 
     Invoke-RuleVerification
-    Write-Host "[maple] deployment already current and healthy"
+    Write-Host "[maple] deployment already current and responsive"
     Write-Host "[maple] public URL: $publicUrl"
-    Write-Host "[maple] public health: $publicUrl/api/health"
     Write-Host "[maple] source SHA: $ExpectedSha"
     return $true
 }
@@ -160,7 +161,7 @@ if (-not $Force -and (Test-Path (Join-Path $MapleSourceRoot ".git"))) {
     cmd.exe /d /s /c $fetchCommand
     if ($LASTEXITCODE -ne 0) { throw "Failed to check latest Maple revision." }
     $latestSha = (git -C $MapleSourceRoot rev-parse origin/main | Out-String).Trim()
-    if ($latestSha -and (Test-HealthyExistingDeployment $latestSha)) {
+    if ($latestSha -and (Test-ReadyExistingDeployment $latestSha)) {
         return
     }
 }
