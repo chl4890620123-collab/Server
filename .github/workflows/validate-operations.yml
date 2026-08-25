@@ -1,0 +1,120 @@
+name: Validate Server operations
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "deploy/compose/**"
+      - "deploy/caddy/**"
+      - "deploy/runtime/**"
+      - "deploy/scripts/**"
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/**"
+      - "deploy/compose/**"
+      - "deploy/caddy/**"
+      - "deploy/runtime/**"
+      - "deploy/scripts/**"
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Enforce operations-only repository boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInE 'SERVER_(HOST|USER|PORT|SSH_KEY|PASSWORD)|ssh-action|sshpass|runs-on:.*self-hosted' .github/workflows; then
+            echo 'Server workflows must not connect to or execute on the production mini PC.' >&2
+            exit 1
+          fi
+
+      - name: Validate PowerShell deployment scripts parse
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $files = @(
+            'deploy/scripts/deploy-aitm.ps1',
+            'deploy/scripts/deploy-restok.ps1',
+            'deploy/scripts/check-restok-legacy-data.ps1',
+            'deploy/scripts/deploy-maple.ps1',
+            'deploy/scripts/run-maple-deploy.ps1',
+            'deploy/scripts/publish-maple-status.ps1'
+          )
+          foreach ($file in $files) {
+            if (-not (Test-Path $file)) { throw "Required operations script is missing: $file" }
+            $tokens = $null
+            $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            )
+            if ($errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Error $_.Message }
+              throw "PowerShell syntax validation failed: $file"
+            }
+            Write-Host "PowerShell syntax OK: $file"
+          }
+
+      - name: Validate Aitm production Compose
+        shell: bash
+        env:
+          DB_NAME: aitm
+          DB_USER: aitm_app
+          AITM_DB_PASSWORD: ci-aitm-password
+          AITM_DB_ROOT_PASSWORD: ci-aitm-root-password
+          AITM_DB_DATA_DIR: /tmp/aitm-db
+          AITM_AI_SECURE_TOKEN: ci-aitm-ai-token
+          AITM_VIDEO_DATA_DIR: /tmp/aitm-videos
+          AITM_CADDYFILE: /tmp/aitm.Caddyfile
+          AITM_CLOUDFLARED_BINARY: /tmp/cloudflared
+          AITM_LOCAL_PORT: "9060"
+        run: docker compose -p aitm-validation -f deploy/compose/aitm.yml config >/dev/null
+
+      - name: Validate Restok production Compose
+        shell: bash
+        env:
+          RESTOK_SOURCE_DIR: /tmp/restok-source
+          RESTOK_DB_DATA_DIR: /tmp/restok-db
+          RESTOK_UPLOAD_DATA_DIR: /tmp/restok-uploads
+          RESTOK_CADDYFILE: /tmp/restok.Caddyfile
+          RESTOK_CLOUDFLARED_BINARY: /tmp/cloudflared
+          RESTOK_LOCAL_PORT: "9050"
+          DB_NAME: restock_db
+          DB_USER: restok
+          DB_PASSWORD: ci-restok-password
+          DB_ROOT_PASSWORD: ci-restok-root-password
+          JWT_SECRET: ci-jwt-secret-that-is-at-least-32-bytes-long
+          GEMINI_API_KEY: ""
+        run: docker compose -p restok-validation -f deploy/compose/restok.yml config >/dev/null
+
+      - name: Validate Maple production Compose
+        shell: bash
+        env:
+          MAPLE_DB_DATA_DIR: /tmp/maple-db
+          MAPLE_CADDYFILE: /tmp/maple.Caddyfile
+          MAPLE_CLOUDFLARED_BINARY: /tmp/cloudflared
+          MAPLE_LOCAL_PORT: "9040"
+          DB_NAME: maple_craft
+          DB_USER: maple_app
+          DB_PASSWORD: ci-maple-password
+          DB_ROOT_PASSWORD: ci-maple-root-password
+          ADMIN_TOKEN: ci-maple-admin-token
+        run: docker compose -p maple-validation -f deploy/compose/maple.yml config >/dev/null
+
+      - name: Validate Caddy configurations
+        shell: bash
+        run: |
+          set -euo pipefail
+          for service in aitm restok maple; do
+            docker run --rm \
+              -v "$PWD/deploy/caddy/${service}.Caddyfile:/etc/caddy/Caddyfile:ro" \
+              caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
+          done
