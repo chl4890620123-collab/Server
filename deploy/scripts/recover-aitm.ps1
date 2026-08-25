@@ -26,6 +26,19 @@ function Assert-LastExitCode([string]$Message) {
     }
 }
 
+function Restore-DockerCliEnvironment {
+    if ([string]::IsNullOrWhiteSpace($PreviousDockerConfig)) {
+        Remove-Item Env:DOCKER_CONFIG -ErrorAction SilentlyContinue
+    } else {
+        $env:DOCKER_CONFIG = $PreviousDockerConfig
+    }
+    if ([string]::IsNullOrWhiteSpace($PreviousBuildkitProgress)) {
+        Remove-Item Env:BUILDKIT_PROGRESS -ErrorAction SilentlyContinue
+    } else {
+        $env:BUILDKIT_PROGRESS = $PreviousBuildkitProgress
+    }
+}
+
 try {
     if (-not (Test-Path $DeployScript)) {
         throw "Aitm deployment script is missing: $DeployScript"
@@ -66,18 +79,20 @@ try {
         throw "Aitm SHA mismatch: expected=$ExpectedSha actual=$actualSourceSha"
     }
 
-    # Docker Desktop credential helpers can depend on an interactive Windows
-    # logon session. Production recovery only pulls public images, so use an
-    # isolated empty Docker config rather than mutating the user's real config.
-    New-Item -ItemType Directory -Force -Path $DockerConfigRoot | Out-Null
-    '{"auths":{}}' | Set-Content -Path (Join-Path $DockerConfigRoot 'config.json') -Encoding ascii
-    $env:DOCKER_CONFIG = $DockerConfigRoot
-    $env:BUILDKIT_PROGRESS = 'plain'
-
+    # Validate local Docker/Compose before hiding the user's Docker config.
+    # Docker Desktop discovers the Compose plugin through the normal CLI setup.
     docker version *> $null
     Assert-LastExitCode 'Docker Engine is not available.'
     docker compose version *> $null
     Assert-LastExitCode 'Docker Compose is not available.'
+
+    # Docker Desktop credential helpers can depend on an interactive Windows
+    # logon session. Image builds only pull public images, so temporarily use
+    # an isolated empty Docker config instead of mutating the real user config.
+    New-Item -ItemType Directory -Force -Path $DockerConfigRoot | Out-Null
+    '{"auths":{}}' | Set-Content -Path (Join-Path $DockerConfigRoot 'config.json') -Encoding ascii
+    $env:DOCKER_CONFIG = $DockerConfigRoot
+    $env:BUILDKIT_PROGRESS = 'plain'
 
     Write-Host '[aitm-recovery] building exact AI image'
     docker build --pull -t aitm-production-ai:latest (Join-Path $SourceRoot 'demo\ai')
@@ -100,6 +115,9 @@ try {
         }
     }
 
+    # Restore the normal Docker CLI config before Compose/deploy operations.
+    Restore-DockerCliEnvironment
+
     Set-Location $ServerRoot
     & $DeployScript -ExpectedSha $ExpectedSha -Force
     if (-not $?) {
@@ -109,16 +127,7 @@ try {
     Write-Error $_
     $ExitCode = 1
 } finally {
-    if ([string]::IsNullOrWhiteSpace($PreviousDockerConfig)) {
-        Remove-Item Env:DOCKER_CONFIG -ErrorAction SilentlyContinue
-    } else {
-        $env:DOCKER_CONFIG = $PreviousDockerConfig
-    }
-    if ([string]::IsNullOrWhiteSpace($PreviousBuildkitProgress)) {
-        Remove-Item Env:BUILDKIT_PROGRESS -ErrorAction SilentlyContinue
-    } else {
-        $env:BUILDKIT_PROGRESS = $PreviousBuildkitProgress
-    }
+    Restore-DockerCliEnvironment
     Remove-Item -Recurse -Force $DockerConfigRoot -ErrorAction SilentlyContinue
 }
 
