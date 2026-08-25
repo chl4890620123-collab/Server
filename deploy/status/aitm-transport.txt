@@ -1,10 +1,10 @@
-run_id=32790507491
+run_id=32793582094
 run_attempt=1
 event=schedule
-aitm_sha=22100a1499519524ba8535d5f11101f93d9b2154
+aitm_sha=b83a0b6a3728826e185f6aa03c4a34d6cca01763
 image_bundle=true
 ssh_available=true
 build=success
-ssh_connection=attempted
-remote_exit_code=1
+ssh_connection=not_attempted
+remote_exit_code=999
 deployment=failure
