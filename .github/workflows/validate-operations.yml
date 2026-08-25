@@ -38,6 +38,25 @@ jobs:
             exit 1
           fi
 
+      - name: Enforce independent service wiring
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -RInE 'RESTOK_(DB|AI)|restok\.ai|X-RESTOK-AI-TOKEN' \
+            deploy/compose/aitm.yml deploy/runtime/aitm.env.example deploy/scripts/deploy-aitm.ps1; then
+            echo 'Aitm operations files must not depend on Restok runtime names.' >&2
+            exit 1
+          fi
+          if grep -RInE 'AITM_(DB|AI)|aitm\.ai|X-AITM-AI-TOKEN' \
+            deploy/compose/restok.yml deploy/runtime/restok.env.example deploy/scripts/deploy-restok.ps1; then
+            echo 'Restok operations files must not depend on Aitm runtime names.' >&2
+            exit 1
+          fi
+          if grep -q '/api/health' deploy/scripts/deploy-aitm.ps1; then
+            echo 'Aitm deployment verification must use functional routes instead of /api/health.' >&2
+            exit 1
+          fi
+
       - name: Validate PowerShell deployment scripts parse
         shell: pwsh
         run: |

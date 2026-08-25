@@ -76,15 +76,15 @@ function Assert-PrebuiltImages {
     Write-Host "[aitm] verified prebuilt application and runtime images"
 }
 
-function Test-HealthyExistingDeployment([string]$Sha, [int]$Port) {
+function Test-FunctionalExistingDeployment([string]$Sha, [int]$Port) {
     if (-not (Test-Path $MarkerFile)) { return $false }
     $deployedSha = (Get-Content $MarkerFile -Raw).Trim()
     if ($deployedSha -ne $Sha) { return $false }
 
     try {
-        $health = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/api/health" -TimeoutSec 5
+        $standards = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/api/standards" -TimeoutSec 5
         $root = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$Port/" -TimeoutSec 5
-        if ($health.StatusCode -ne 200 -or $root.StatusCode -ne 200) { return $false }
+        if ($standards.StatusCode -ne 200 -or $root.StatusCode -ne 200) { return $false }
     } catch {
         return $false
     }
@@ -102,13 +102,14 @@ function Test-HealthyExistingDeployment([string]$Sha, [int]$Port) {
     $publicUrl = Get-TunnelUrl
     if ([string]::IsNullOrWhiteSpace($publicUrl)) { return $false }
     try {
-        $publicHealth = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/api/health" -TimeoutSec 10
-        if ($publicHealth.StatusCode -ne 200) { return $false }
+        $publicApi = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/api/standards" -TimeoutSec 10
+        $publicRoot = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/" -TimeoutSec 10
+        if ($publicApi.StatusCode -ne 200 -or $publicRoot.StatusCode -ne 200) { return $false }
     } catch {
         return $false
     }
 
-    Write-Host "[aitm] deployment already current and healthy"
+    Write-Host "[aitm] deployment already current and functional"
     Write-Host "[aitm] public URL: $publicUrl"
     Write-Host "[aitm] source SHA: $Sha"
     return $true
@@ -177,7 +178,7 @@ if (-not [int]::TryParse($envMap["AITM_LOCAL_PORT"], [ref]$localPort) -or $local
     throw "AITM_LOCAL_PORT must be between 1024 and 65535."
 }
 
-if (-not $Force -and (Test-HealthyExistingDeployment $ExpectedSha $localPort)) {
+if (-not $Force -and (Test-FunctionalExistingDeployment $ExpectedSha $localPort)) {
     return
 }
 
@@ -231,19 +232,16 @@ Write-Host "[aitm] starting production containers without registry access"
 docker compose --env-file $RuntimeEnv -p aitm-production -f $ComposeFile up -d --no-build --pull never --remove-orphans
 if ($LASTEXITCODE -ne 0) { throw "Aitm docker compose deployment failed." }
 
-$localHealth = "http://127.0.0.1:$localPort/api/health"
+$localApi = "http://127.0.0.1:$localPort/api/standards"
 $localReady = $false
 for ($attempt = 1; $attempt -le 60; $attempt++) {
     try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri $localHealth -TimeoutSec 5
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $localApi -TimeoutSec 5
         if ($response.StatusCode -eq 200) { $localReady = $true; break }
     } catch {}
     Start-Sleep -Seconds 5
 }
-if (-not $localReady) { throw "Aitm local health check failed: $localHealth" }
-
-$standards = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$localPort/api/standards" -TimeoutSec 10
-if ($standards.StatusCode -ne 200) { throw "Aitm backend/database route validation failed." }
+if (-not $localReady) { throw "Aitm local functional API check failed: $localApi" }
 
 $root = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$localPort/" -TimeoutSec 10
 if ($root.StatusCode -ne 200) { throw "Aitm local frontend did not return HTTP 200." }
@@ -257,16 +255,16 @@ for ($attempt = 1; $attempt -le 36; $attempt++) {
 }
 if (-not $publicUrl) { throw "Aitm Cloudflare Quick Tunnel did not provide a public URL." }
 
-$publicHealth = "$publicUrl/api/health"
+$publicApi = "$publicUrl/api/standards"
 $publicReady = $false
 for ($attempt = 1; $attempt -le 24; $attempt++) {
     try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri $publicHealth -TimeoutSec 10
+        $response = Invoke-WebRequest -UseBasicParsing -Uri $publicApi -TimeoutSec 10
         if ($response.StatusCode -eq 200) { $publicReady = $true; break }
     } catch {}
     Start-Sleep -Seconds 5
 }
-if (-not $publicReady) { throw "Public Aitm health check failed: $publicHealth" }
+if (-not $publicReady) { throw "Public Aitm functional API check failed: $publicApi" }
 
 $publicRoot = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/" -TimeoutSec 10
 if ($publicRoot.StatusCode -ne 200) { throw "Public Aitm frontend did not return HTTP 200." }
@@ -276,7 +274,7 @@ $verifiedAt = (Get-Date).ToUniversalTime().ToString("o")
 @"
 aitm_sha=$ExpectedSha
 public_url=$publicUrl
-public_health=$publicHealth
+public_api=$publicApi
 local_url=http://127.0.0.1:$localPort
 verified_at_utc=$verifiedAt
 "@ | Set-Content -Path $StatusFile -Encoding ascii
@@ -284,5 +282,5 @@ verified_at_utc=$verifiedAt
 Write-Host "[aitm] deployment complete"
 Write-Host "[aitm] local URL: http://127.0.0.1:$localPort"
 Write-Host "[aitm] public URL: $publicUrl"
-Write-Host "[aitm] public health: $publicHealth"
+Write-Host "[aitm] public API: $publicApi"
 Write-Host "[aitm] source SHA: $ExpectedSha"
