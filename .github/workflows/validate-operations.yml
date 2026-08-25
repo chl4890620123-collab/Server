@@ -57,7 +57,7 @@ jobs:
             exit 1
           fi
           grep -q 'DOCKER_CONFIG' deploy/scripts/recover-aitm.ps1
-          grep -q '\{"auths":\{\}\}' deploy/scripts/recover-aitm.ps1
+          grep -Fq '{"auths":{}}' deploy/scripts/recover-aitm.ps1
 
       - name: Validate PowerShell deployment scripts parse
         shell: pwsh
