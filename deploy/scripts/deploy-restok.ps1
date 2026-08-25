@@ -62,13 +62,10 @@ function Write-JsonUtf8NoBom([string]$Path, $Value) {
 
 function Disable-GlobalDockerCredentialHelper {
     $configPath = Join-Path $env:USERPROFILE ".docker\config.json"
-    if (-not (Test-Path $configPath)) {
-        return $null
-    }
+    if (-not (Test-Path $configPath)) { return $null }
 
     $backupPath = Join-Path $RuntimeRoot ("docker-config-backup-" + [guid]::NewGuid().ToString("N") + ".json")
     Copy-Item -Path $configPath -Destination $backupPath -Force
-
     $config = Get-Content $configPath -Raw | ConvertFrom-Json
     $changed = $false
     if ($config.PSObject.Properties.Name -contains "credsStore") {
@@ -79,22 +76,15 @@ function Disable-GlobalDockerCredentialHelper {
         $config.PSObject.Properties.Remove("credHelpers")
         $changed = $true
     }
-
     if ($changed) {
         Write-JsonUtf8NoBom $configPath $config
         Write-Host "[restok] temporarily disabled Docker Desktop credential helper for non-interactive build"
     }
-
-    return [pscustomobject]@{
-        ConfigPath = $configPath
-        BackupPath = $backupPath
-        Changed = $changed
-    }
+    return [pscustomobject]@{ ConfigPath = $configPath; BackupPath = $backupPath; Changed = $changed }
 }
 
 function Restore-GlobalDockerCredentialHelper($State) {
     if ($null -eq $State) { return }
-
     if (Test-Path $State.BackupPath) {
         if ($State.Changed) {
             Copy-Item -Path $State.BackupPath -Destination $State.ConfigPath -Force
@@ -107,36 +97,23 @@ function Restore-GlobalDockerCredentialHelper($State) {
 function Initialize-IsolatedDockerCliConfig {
     $sourceRoot = Join-Path $env:USERPROFILE ".docker"
     $targetRoot = Join-Path $RuntimeRoot "docker-cli"
-
-    if (Test-Path $targetRoot) {
-        Remove-Item -Recurse -Force $targetRoot
-    }
+    if (Test-Path $targetRoot) { Remove-Item -Recurse -Force $targetRoot }
     New-Item -ItemType Directory -Force -Path $targetRoot | Out-Null
-
     if (Test-Path $sourceRoot) {
         Copy-Item -Path (Join-Path $sourceRoot "*") -Destination $targetRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
-
     $configPath = Join-Path $targetRoot "config.json"
     if (Test-Path $configPath) {
         $config = Get-Content $configPath -Raw | ConvertFrom-Json
-        if ($config.PSObject.Properties.Name -contains "credsStore") {
-            $config.PSObject.Properties.Remove("credsStore")
-        }
-        if ($config.PSObject.Properties.Name -contains "credHelpers") {
-            $config.PSObject.Properties.Remove("credHelpers")
-        }
+        if ($config.PSObject.Properties.Name -contains "credsStore") { $config.PSObject.Properties.Remove("credsStore") }
+        if ($config.PSObject.Properties.Name -contains "credHelpers") { $config.PSObject.Properties.Remove("credHelpers") }
         Write-JsonUtf8NoBom $configPath $config
     } else {
         '{"auths":{}}' | Set-Content -Path $configPath -Encoding ascii
     }
-
     $env:DOCKER_CONFIG = $targetRoot
     docker version *> $null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Isolated Docker CLI configuration cannot reach Docker Desktop."
-    }
-
+    if ($LASTEXITCODE -ne 0) { throw "Isolated Docker CLI configuration cannot reach Docker Desktop." }
     Write-Host "[restok] using isolated Docker CLI config without desktop credential helper"
 }
 
@@ -150,9 +127,7 @@ function Assert-PrebuiltImages {
     )
     foreach ($image in $requiredImages) {
         docker image inspect $image *> $null
-        if ($LASTEXITCODE -ne 0) {
-            throw "Required prebuilt image is missing: $image"
-        }
+        if ($LASTEXITCODE -ne 0) { throw "Required prebuilt image is missing: $image" }
     }
     Write-Host "[restok] verified prebuilt application and runtime images"
 }
@@ -165,46 +140,56 @@ function Get-TunnelUrl {
         $matches = [regex]::Matches($logs, 'https://[a-z0-9-]+\.trycloudflare\.com')
         if ($matches.Count -gt 0) { return $matches[$matches.Count - 1].Value }
         return $null
+    } catch { return $null }
+    finally { $ErrorActionPreference = $oldPreference }
+}
+
+function Test-RestokBackendProbe([string]$BaseUrl, [int]$TimeoutSec = 5) {
+    $body = @{ username = "__restok_deploy_probe__"; password = "not-a-real-password" } | ConvertTo-Json -Compress
+    try {
+        $response = Invoke-WebRequest -UseBasicParsing -Method Post -Uri "$BaseUrl/api/auth/login" -ContentType "application/json" -Body $body -TimeoutSec $TimeoutSec
+        return $response.StatusCode -eq 200
     } catch {
-        return $null
-    } finally {
-        $ErrorActionPreference = $oldPreference
+        $response = $_.Exception.Response
+        if ($null -ne $response) {
+            try {
+                $statusCode = [int]$response.StatusCode
+                if ($statusCode -eq 401) { return $true }
+            } catch {}
+        }
+        return $false
     }
 }
 
-function Test-HealthyExistingDeployment([string]$ExpectedSha) {
+function Test-ReadyExistingDeployment([string]$ExpectedSha) {
     if (-not (Test-Path $MarkerFile)) { return $false }
     $deployedSha = (Get-Content $MarkerFile -Raw).Trim()
     if ($deployedSha -ne $ExpectedSha) { return $false }
 
     $localPort = Get-RuntimeValue "RESTOK_LOCAL_PORT" "9050"
     try {
-        $health = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$localPort/api/auth/health" -TimeoutSec 5
         $root = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$localPort/" -TimeoutSec 5
-        if ($health.StatusCode -ne 200 -or $root.StatusCode -ne 200) { return $false }
-    } catch {
-        return $false
-    }
+        if ($root.StatusCode -ne 200 -or -not (Test-RestokBackendProbe "http://127.0.0.1:$localPort" 5)) { return $false }
+    } catch { return $false }
 
     $dbHealth = (docker inspect --format "{{.State.Health.Status}}" restok-db 2>$null | Out-String).Trim()
+    $aiRunning = (docker inspect --format "{{.State.Running}}" restok-ai 2>$null | Out-String).Trim()
     $backendRunning = (docker inspect --format "{{.State.Running}}" restok-backend 2>$null | Out-String).Trim()
     $frontendRunning = (docker inspect --format "{{.State.Running}}" restok-frontend 2>$null | Out-String).Trim()
     $caddyRunning = (docker inspect --format "{{.State.Running}}" restok-caddy 2>$null | Out-String).Trim()
     $tunnelRunning = (docker inspect --format "{{.State.Running}}" restok-public-tunnel 2>$null | Out-String).Trim()
-    if ($dbHealth -ne "healthy" -or $backendRunning -ne "true" -or $frontendRunning -ne "true" -or $caddyRunning -ne "true" -or $tunnelRunning -ne "true") {
+    if ($dbHealth -ne "healthy" -or $aiRunning -ne "true" -or $backendRunning -ne "true" -or $frontendRunning -ne "true" -or $caddyRunning -ne "true" -or $tunnelRunning -ne "true") {
         return $false
     }
 
     $publicUrl = Get-TunnelUrl
     if ([string]::IsNullOrWhiteSpace($publicUrl)) { return $false }
     try {
-        $publicHealth = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/api/auth/health" -TimeoutSec 10
-        if ($publicHealth.StatusCode -ne 200) { return $false }
-    } catch {
-        return $false
-    }
+        $publicRoot = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/" -TimeoutSec 10
+        if ($publicRoot.StatusCode -ne 200 -or -not (Test-RestokBackendProbe $publicUrl 10)) { return $false }
+    } catch { return $false }
 
-    Write-Host "[restok] deployment already current and healthy"
+    Write-Host "[restok] deployment already current and responsive"
     Write-Host "[restok] public URL: $publicUrl"
     Write-Host "[restok] source SHA: $ExpectedSha"
     return $true
@@ -268,9 +253,7 @@ if ($missingRootPassword) { Add-EnvSetting $RuntimeEnv $envMap "DB_ROOT_PASSWORD
 Add-EnvSetting $RuntimeEnv $envMap "JWT_SECRET" (New-SecretValue)
 
 foreach ($key in @("RESTOK_LOCAL_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD", "DB_ROOT_PASSWORD", "JWT_SECRET")) {
-    if (-not $envMap.ContainsKey($key) -or [string]::IsNullOrWhiteSpace($envMap[$key])) {
-        throw "Required Restok runtime setting '$key' is missing."
-    }
+    if (-not $envMap.ContainsKey($key) -or [string]::IsNullOrWhiteSpace($envMap[$key])) { throw "Required Restok runtime setting '$key' is missing." }
 }
 
 $localPort = 0
@@ -279,9 +262,7 @@ if (-not [int]::TryParse($envMap["RESTOK_LOCAL_PORT"], [ref]$localPort) -or $loc
 }
 $existingCaddy = docker ps --format "{{.Names}}" | Where-Object { $_ -eq "restok-caddy" }
 $listener = Get-NetTCPConnection -State Listen -LocalPort $localPort -ErrorAction SilentlyContinue
-if ($listener -and -not $existingCaddy) {
-    throw "Restok local port $localPort is already in use by another service."
-}
+if ($listener -and -not $existingCaddy) { throw "Restok local port $localPort is already in use by another service." }
 
 if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary -ErrorAction SilentlyContinue).Length -le 1MB) {
     Write-Host "[restok] downloading Cloudflared runtime"
@@ -295,9 +276,7 @@ if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary -ErrorA
         Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $CloudflaredBinary -TimeoutSec 120
     }
 }
-if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary).Length -le 1MB) {
-    throw "Cloudflared binary is missing or invalid."
-}
+if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary).Length -le 1MB) { throw "Cloudflared binary is missing or invalid." }
 
 if (-not (Test-Path (Join-Path $RestokSourceRoot ".git"))) {
     if (Test-Path $RestokSourceRoot) { Remove-Item -Recurse -Force $RestokSourceRoot }
@@ -309,9 +288,7 @@ Write-Host "[restok] checking latest application source"
 git -C $RestokSourceRoot fetch --prune origin main
 if ($LASTEXITCODE -ne 0) { throw "Failed to fetch Restok main." }
 $latestSha = (git -C $RestokSourceRoot rev-parse origin/main | Out-String).Trim()
-if (-not $Force -and $latestSha -and (Test-HealthyExistingDeployment $latestSha)) {
-    return
-}
+if (-not $Force -and $latestSha -and (Test-ReadyExistingDeployment $latestSha)) { return }
 
 git -C $RestokSourceRoot checkout -B main origin/main
 if ($LASTEXITCODE -ne 0) { throw "Failed to checkout Restok main." }
@@ -347,7 +324,6 @@ if ($Prebuilt) {
     Write-Host "[restok] validating production compose"
     docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile config *> $null
     if ($LASTEXITCODE -ne 0) { throw "Restok docker compose configuration is invalid." }
-
     Write-Host "[restok] starting production containers without registry access"
     docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile up -d --no-build --pull never --remove-orphans
     if ($LASTEXITCODE -ne 0) { throw "Restok prebuilt docker compose deployment failed." }
@@ -355,15 +331,12 @@ if ($Prebuilt) {
     $dockerCredentialState = Disable-GlobalDockerCredentialHelper
     try {
         Initialize-IsolatedDockerCliConfig
-
         Write-Host "[restok] validating production compose"
         docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile config *> $null
         if ($LASTEXITCODE -ne 0) { throw "Restok docker compose configuration is invalid." }
-
         Write-Host "[restok] building application images before replacing running containers"
         docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile build
         if ($LASTEXITCODE -ne 0) { throw "Restok image build failed; existing containers were left running." }
-
         Write-Host "[restok] starting production containers"
         docker compose --env-file $RuntimeEnv -p restok-production -f $ComposeFile up -d --remove-orphans
         if ($LASTEXITCODE -ne 0) { throw "Restok docker compose deployment failed." }
@@ -372,19 +345,16 @@ if ($Prebuilt) {
     }
 }
 
-$localHealth = "http://127.0.0.1:$localPort/api/auth/health"
+$localBase = "http://127.0.0.1:$localPort"
 $localReady = $false
 for ($attempt = 1; $attempt -le 60; $attempt++) {
     try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri $localHealth -TimeoutSec 5
-        if ($response.StatusCode -eq 200) { $localReady = $true; break }
+        $root = Invoke-WebRequest -UseBasicParsing -Uri "$localBase/" -TimeoutSec 5
+        if ($root.StatusCode -eq 200 -and (Test-RestokBackendProbe $localBase 5)) { $localReady = $true; break }
     } catch {}
     Start-Sleep -Seconds 5
 }
-if (-not $localReady) { throw "Restok local health check failed: $localHealth" }
-
-$root = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$localPort/" -TimeoutSec 10
-if ($root.StatusCode -ne 200) { throw "Restok local frontend did not return HTTP 200." }
+if (-not $localReady) { throw "Restok local functional verification failed." }
 
 Write-Host "[restok] waiting for public HTTPS preview URL"
 $publicUrl = $null
@@ -395,32 +365,26 @@ for ($attempt = 1; $attempt -le 36; $attempt++) {
 }
 if (-not $publicUrl) { throw "Restok Cloudflare Quick Tunnel did not provide a public URL." }
 
-$publicHealth = "$publicUrl/api/auth/health"
 $publicReady = $false
 for ($attempt = 1; $attempt -le 24; $attempt++) {
     try {
-        $response = Invoke-WebRequest -UseBasicParsing -Uri $publicHealth -TimeoutSec 10
-        if ($response.StatusCode -eq 200) { $publicReady = $true; break }
+        $publicRoot = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/" -TimeoutSec 10
+        if ($publicRoot.StatusCode -eq 200 -and (Test-RestokBackendProbe $publicUrl 10)) { $publicReady = $true; break }
     } catch {}
     Start-Sleep -Seconds 5
 }
-if (-not $publicReady) { throw "Public Restok health check failed: $publicHealth" }
-
-$publicRoot = Invoke-WebRequest -UseBasicParsing -Uri "$publicUrl/" -TimeoutSec 10
-if ($publicRoot.StatusCode -ne 200) { throw "Public Restok frontend did not return HTTP 200." }
+if (-not $publicReady) { throw "Public Restok functional verification failed." }
 
 $RestokSha | Set-Content -Path $MarkerFile -Encoding ascii
 $verifiedAt = (Get-Date).ToUniversalTime().ToString("o")
 @"
 restok_sha=$RestokSha
 public_url=$publicUrl
-public_health=$publicHealth
-local_url=http://127.0.0.1:$localPort
+local_url=$localBase
 verified_at_utc=$verifiedAt
 "@ | Set-Content -Path $StatusFile -Encoding ascii
 
 Write-Host "[restok] deployment complete"
-Write-Host "[restok] local URL: http://127.0.0.1:$localPort"
+Write-Host "[restok] local URL: $localBase"
 Write-Host "[restok] public URL: $publicUrl"
-Write-Host "[restok] public health: $publicHealth"
 Write-Host "[restok] source SHA: $RestokSha"

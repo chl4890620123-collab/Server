@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       force:
-        description: Force rebuild even when the deployed Restok SHA is already healthy
+        description: Force rebuild even when the deployed Restok SHA is already responsive
         required: false
         default: false
         type: boolean
@@ -261,7 +261,6 @@ jobs:
                 cat > deploy/status/restok.txt <<EOF
           restok_sha=$restok_sha
           public_url=$public_url
-          public_health=$public_url/api/auth/health
           local_url=http://127.0.0.1:9050
           EOF
               fi
@@ -323,6 +322,6 @@ jobs:
             exit 1
           fi
           if [ '${{ steps.record.outputs.final }}' != 'success' ]; then
-            echo 'Restok deployment or health verification failed.'
+            echo 'Restok deployment or functional verification failed.'
             exit 1
           fi
