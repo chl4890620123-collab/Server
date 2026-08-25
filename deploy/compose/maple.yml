@@ -28,16 +28,14 @@ services:
         max-file: "3"
 
   maple-app:
-    image: python:3.12-slim
+    image: maple-production-app:latest
     pull_policy: never
     container_name: maple-app
     restart: unless-stopped
-    working_dir: /app
     depends_on:
       maple-db:
         condition: service_healthy
     environment:
-      PYTHONPATH: /deps
       DB_ENGINE: mariadb
       DB_HOST: maple-db
       DB_PORT: 3306
@@ -46,22 +44,6 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
       ADMIN_TOKEN: ${ADMIN_TOKEN:?ADMIN_TOKEN is required}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
-    command:
-      - sh
-      - -c
-      - >-
-        if [ ! -f /deps/uvicorn/__init__.py ] || [ ! -f /deps/fastapi/__init__.py ]; then
-          python -m pip install --disable-pip-version-check --no-cache-dir --target /deps -r /app/requirements.txt;
-        fi;
-        exec python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
-    volumes:
-      - type: bind
-        source: ${MAPLE_SOURCE_DIR:?MAPLE_SOURCE_DIR is required}
-        target: /app
-        read_only: true
-      - type: bind
-        source: ${MAPLE_PYTHON_DEPS_DIR:?MAPLE_PYTHON_DEPS_DIR is required}
-        target: /deps
     networks:
       - maple-internal
     logging:
