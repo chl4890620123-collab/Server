@@ -1,6 +1,6 @@
-run_id=32793206413
+run_id=32798490234
 run_attempt=1
-event=push
+event=schedule
 ssh_fallback_available=true
 ssh_connection=success
 remote_exit_code=0
