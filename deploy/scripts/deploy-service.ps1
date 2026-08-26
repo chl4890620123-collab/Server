@@ -12,6 +12,67 @@ $ServerRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $SourcesRoot = 'C:\home\server\sources'
 New-Item -ItemType Directory -Force -Path $SourcesRoot | Out-Null
 
+function Test-DockerEngine {
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    try {
+        $output = docker version 2>&1 | Out-String
+        return [pscustomobject]@{
+            Ready = ($LASTEXITCODE -eq 0)
+            Output = $output.Trim()
+        }
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+}
+
+function Wait-DockerEngine {
+    param([string]$Name)
+
+    $serviceRestartAttempted = $false
+    $desktopStartAttempted = $false
+    for ($attempt = 1; $attempt -le 18; $attempt++) {
+        $probe = Test-DockerEngine
+        if ($probe.Ready) {
+            Write-Host "[$Name] Docker Linux Engine ready on attempt $attempt"
+            return
+        }
+
+        if ($attempt -eq 3 -and -not $serviceRestartAttempted) {
+            $serviceRestartAttempted = $true
+            Write-Host "[$Name] Docker Engine unhealthy; attempting com.docker.service restart"
+            try {
+                $dockerService = Get-Service -Name 'com.docker.service' -ErrorAction Stop
+                if ($dockerService.Status -eq 'Running') {
+                    Restart-Service -Name 'com.docker.service' -Force -ErrorAction Stop
+                } else {
+                    Start-Service -Name 'com.docker.service' -ErrorAction Stop
+                }
+            } catch {
+                Write-Warning "[$Name] Docker service restart was not available: $($_.Exception.Message)"
+            }
+        }
+
+        if ($attempt -eq 7 -and -not $desktopStartAttempted) {
+            $desktopStartAttempted = $true
+            $desktopExe = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
+            if (Test-Path $desktopExe) {
+                Write-Host "[$Name] requesting Docker Desktop startup"
+                try {
+                    Start-Process -FilePath $desktopExe -WindowStyle Hidden -ErrorAction Stop | Out-Null
+                } catch {
+                    Write-Warning "[$Name] Docker Desktop startup request failed: $($_.Exception.Message)"
+                }
+            }
+        }
+
+        if ($attempt -eq 18) {
+            throw "Docker Linux Engine did not become ready. Last response: $($probe.Output)"
+        }
+        Start-Sleep -Seconds 5
+    }
+}
+
 $services = @{
     maple = @{
         Repository = 'https://github.com/chl4890620123-collab/maple.git'
@@ -54,17 +115,18 @@ $sourceSha = (git -C $sourceDir rev-parse HEAD | Out-String).Trim()
 if ($sourceSha -notmatch '^[0-9a-f]{40}$') { throw "[$Service] invalid source SHA" }
 Write-Host "[$Service] source SHA: $sourceSha"
 
-docker version *> $null
-if ($LASTEXITCODE -ne 0) { throw 'Docker Engine is not available.' }
-
 $previousDockerConfig = $env:DOCKER_CONFIG
+$previousDockerApiVersion = $env:DOCKER_API_VERSION
 $dockerConfigRoot = Join-Path $env:TEMP ("server-docker-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path $dockerConfigRoot | Out-Null
 '{"auths":{}}' | Set-Content -Path (Join-Path $dockerConfigRoot 'config.json') -Encoding ascii
 $env:DOCKER_CONFIG = $dockerConfigRoot
-Write-Host "[$Service] using isolated Docker CLI config without credential helper"
+$env:DOCKER_API_VERSION = '1.44'
+Write-Host "[$Service] using isolated Docker CLI config and compatible API version"
 
 try {
+    Wait-DockerEngine -Name $Service
+
     switch ($Service) {
         'maple' {
             Write-Host '[maple] building isolated application image'
@@ -103,6 +165,11 @@ try {
         Remove-Item Env:DOCKER_CONFIG -ErrorAction SilentlyContinue
     } else {
         $env:DOCKER_CONFIG = $previousDockerConfig
+    }
+    if ([string]::IsNullOrWhiteSpace($previousDockerApiVersion)) {
+        Remove-Item Env:DOCKER_API_VERSION -ErrorAction SilentlyContinue
+    } else {
+        $env:DOCKER_API_VERSION = $previousDockerApiVersion
     }
     Remove-Item -Recurse -Force $dockerConfigRoot -ErrorAction SilentlyContinue
 }
