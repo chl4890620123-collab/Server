@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('maple', 'restok')]
+    [ValidateSet('maple', 'restok', 'aitm')]
     [string]$Service,
     [switch]$Force
 )
@@ -9,7 +9,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $ServerRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$SourcesRoot = 'C:\home\server\sources'
+$SourcesRoot = 'D:\server-data\sources'
+if (-not (Test-Path 'D:\')) { throw 'D drive is required for production service sources.' }
 New-Item -ItemType Directory -Force -Path $SourcesRoot | Out-Null
 
 function Test-DockerEngine {
@@ -28,7 +29,6 @@ function Test-DockerEngine {
 
 function Wait-DockerEngine {
     param([string]$Name)
-
     $serviceRestartAttempted = $false
     $desktopStartAttempted = $false
     for ($attempt = 1; $attempt -le 18; $attempt++) {
@@ -37,38 +37,27 @@ function Wait-DockerEngine {
             Write-Host "[$Name] Docker Linux Engine ready on attempt $attempt"
             return
         }
-
         if ($attempt -eq 3 -and -not $serviceRestartAttempted) {
             $serviceRestartAttempted = $true
             Write-Host "[$Name] Docker Engine unhealthy; attempting com.docker.service restart"
             try {
                 $dockerService = Get-Service -Name 'com.docker.service' -ErrorAction Stop
-                if ($dockerService.Status -eq 'Running') {
-                    Restart-Service -Name 'com.docker.service' -Force -ErrorAction Stop
-                } else {
-                    Start-Service -Name 'com.docker.service' -ErrorAction Stop
-                }
+                if ($dockerService.Status -eq 'Running') { Restart-Service -Name 'com.docker.service' -Force -ErrorAction Stop }
+                else { Start-Service -Name 'com.docker.service' -ErrorAction Stop }
             } catch {
                 Write-Warning "[$Name] Docker service restart was not available: $($_.Exception.Message)"
             }
         }
-
         if ($attempt -eq 7 -and -not $desktopStartAttempted) {
             $desktopStartAttempted = $true
             $desktopExe = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
             if (Test-Path $desktopExe) {
                 Write-Host "[$Name] requesting Docker Desktop startup"
-                try {
-                    Start-Process -FilePath $desktopExe -WindowStyle Hidden -ErrorAction Stop | Out-Null
-                } catch {
-                    Write-Warning "[$Name] Docker Desktop startup request failed: $($_.Exception.Message)"
-                }
+                try { Start-Process -FilePath $desktopExe -WindowStyle Hidden -ErrorAction Stop | Out-Null }
+                catch { Write-Warning "[$Name] Docker Desktop startup request failed: $($_.Exception.Message)" }
             }
         }
-
-        if ($attempt -eq 18) {
-            throw "Docker Linux Engine did not become ready. Last response: $($probe.Output)"
-        }
+        if ($attempt -eq 18) { throw "Docker Linux Engine did not become ready. Last response: $($probe.Output)" }
         Start-Sleep -Seconds 5
     }
 }
@@ -81,6 +70,10 @@ $services = @{
     restok = @{
         Repository = 'https://github.com/chl4890620123-collab/Restok-Rangchain.git'
         SourceDir = Join-Path $SourcesRoot 'restok'
+    }
+    aitm = @{
+        Repository = 'https://github.com/chl4890620123-collab/Aitm.git'
+        SourceDir = Join-Path $SourcesRoot 'aitm'
     }
 }
 
@@ -122,7 +115,6 @@ Write-Host "[$Service] using isolated Docker CLI config and compatible API versi
 
 try {
     Wait-DockerEngine -Name $Service
-
     switch ($Service) {
         'maple' {
             Write-Host '[maple] building isolated application image'
@@ -144,18 +136,23 @@ try {
             & (Join-Path $ServerRoot 'deploy\scripts\deploy-restok.ps1') -Force:$Force -Prebuilt
             if (-not $?) { throw '[restok] deployment failed' }
         }
+        'aitm' {
+            Write-Host '[aitm] building isolated service images'
+            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-ai:latest (Join-Path $sourceDir 'demo\ai')
+            if ($LASTEXITCODE -ne 0) { throw '[aitm] AI build failed' }
+            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-backend:latest (Join-Path $sourceDir 'demo')
+            if ($LASTEXITCODE -ne 0) { throw '[aitm] backend build failed' }
+            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-frontend:latest (Join-Path $sourceDir 'front')
+            if ($LASTEXITCODE -ne 0) { throw '[aitm] frontend build failed' }
+            & (Join-Path $ServerRoot 'deploy\scripts\deploy-aitm.ps1') -ExpectedSha $sourceSha -Force:$Force
+            if (-not $?) { throw '[aitm] deployment failed' }
+        }
     }
 } finally {
-    if ([string]::IsNullOrWhiteSpace($previousDockerConfig)) {
-        Remove-Item Env:DOCKER_CONFIG -ErrorAction SilentlyContinue
-    } else {
-        $env:DOCKER_CONFIG = $previousDockerConfig
-    }
-    if ([string]::IsNullOrWhiteSpace($previousDockerApiVersion)) {
-        Remove-Item Env:DOCKER_API_VERSION -ErrorAction SilentlyContinue
-    } else {
-        $env:DOCKER_API_VERSION = $previousDockerApiVersion
-    }
+    if ([string]::IsNullOrWhiteSpace($previousDockerConfig)) { Remove-Item Env:DOCKER_CONFIG -ErrorAction SilentlyContinue }
+    else { $env:DOCKER_CONFIG = $previousDockerConfig }
+    if ([string]::IsNullOrWhiteSpace($previousDockerApiVersion)) { Remove-Item Env:DOCKER_API_VERSION -ErrorAction SilentlyContinue }
+    else { $env:DOCKER_API_VERSION = $previousDockerApiVersion }
     Remove-Item -Recurse -Force $dockerConfigRoot -ErrorAction SilentlyContinue
 }
 
