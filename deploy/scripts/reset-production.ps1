@@ -20,11 +20,15 @@ foreach ($name in $managedContainers) {
 
 $managedNetworks = @('maple-internal','restok-internal','aitm-internal')
 foreach ($name in $managedNetworks) {
-    docker network inspect $name *> $null
-    if ($LASTEXITCODE -eq 0) {
+    $networkExists = docker network ls --format '{{.Name}}' | Where-Object { $_ -eq $name }
+    if ($networkExists) {
         Write-Host "[server] removing network: $name"
         docker network rm $name | Out-Null
-        if ($LASTEXITCODE -ne 0) { Write-Warning "Could not remove network $name; continuing because containers are already stopped." }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "Could not remove network $name; continuing because containers are already stopped."
+        }
+    } else {
+        Write-Host "[server] network already absent: $name"
     }
 }
 
