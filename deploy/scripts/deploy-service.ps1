@@ -62,7 +62,7 @@ switch ($Service) {
         Write-Host '[maple] building isolated application image'
         docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t maple-production-app:latest $sourceDir
         if ($LASTEXITCODE -ne 0) { throw '[maple] Docker build failed' }
-        & (Join-Path $ServerRoot 'deploy\scripts\run-maple-deploy.ps1') -Force:$Force
+        & (Join-Path $ServerRoot 'deploy\scripts\deploy-maple.ps1') -ExpectedSha $sourceSha
         if (-not $?) { throw '[maple] deployment failed' }
     }
     'aitm' {
