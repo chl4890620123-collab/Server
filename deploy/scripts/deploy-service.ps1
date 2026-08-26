@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('maple', 'aitm', 'restok')]
+    [ValidateSet('maple', 'restok')]
     [string]$Service,
     [switch]$Force
 )
@@ -78,10 +78,6 @@ $services = @{
         Repository = 'https://github.com/chl4890620123-collab/maple.git'
         SourceDir = Join-Path $SourcesRoot 'maple'
     }
-    aitm = @{
-        Repository = 'https://github.com/chl4890620123-collab/Aitm.git'
-        SourceDir = Join-Path $SourcesRoot 'aitm'
-    }
     restok = @{
         Repository = 'https://github.com/chl4890620123-collab/Restok-Rangchain.git'
         SourceDir = Join-Path $SourcesRoot 'restok'
@@ -134,17 +130,6 @@ try {
             if ($LASTEXITCODE -ne 0) { throw '[maple] Docker build failed' }
             & (Join-Path $ServerRoot 'deploy\scripts\deploy-maple.ps1') -ExpectedSha $sourceSha
             if (-not $?) { throw '[maple] deployment failed' }
-        }
-        'aitm' {
-            Write-Host '[aitm] building isolated service images'
-            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-ai:latest (Join-Path $sourceDir 'demo\ai')
-            if ($LASTEXITCODE -ne 0) { throw '[aitm] AI build failed' }
-            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-backend:latest (Join-Path $sourceDir 'demo')
-            if ($LASTEXITCODE -ne 0) { throw '[aitm] backend build failed' }
-            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-frontend:latest (Join-Path $sourceDir 'front')
-            if ($LASTEXITCODE -ne 0) { throw '[aitm] frontend build failed' }
-            & (Join-Path $ServerRoot 'deploy\scripts\deploy-aitm.ps1') -ExpectedSha $sourceSha -Force:$Force
-            if (-not $?) { throw '[aitm] deployment failed' }
         }
         'restok' {
             Write-Host '[restok] building isolated service images'
