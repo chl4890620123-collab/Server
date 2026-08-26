@@ -21,8 +21,6 @@ $DbDataRoot = Join-Path $DataRoot 'mariadb'
 $PythonDepsRoot = Join-Path $DataRoot 'python-deps'
 $BackupRoot = Join-Path $DataRoot 'backups'
 $MarkerFile = Join-Path $RuntimeRoot 'deployed.sha'
-$TunnelRuntimeRoot = Join-Path $RuntimeRoot 'cloudflared'
-$CloudflaredBinary = Join-Path $TunnelRuntimeRoot 'cloudflared'
 
 function New-SecretValue {
     return ([guid]::NewGuid().ToString('N') + [guid]::NewGuid().ToString('N'))
@@ -49,18 +47,6 @@ function Add-EnvSetting([string]$Path, [hashtable]$Map, [string]$Key, [string]$V
     }
 }
 
-function Get-TunnelUrl {
-    $old = $ErrorActionPreference
-    $ErrorActionPreference = 'SilentlyContinue'
-    try {
-        $logs = (cmd.exe /d /s /c 'docker logs maple-public-tunnel 2>&1' | Out-String)
-        $matches = [regex]::Matches($logs, 'https://[a-z0-9-]+\.trycloudflare\.com')
-        if ($matches.Count -gt 0) { return $matches[$matches.Count - 1].Value }
-        return $null
-    } catch { return $null }
-    finally { $ErrorActionPreference = $old }
-}
-
 Write-Host '[maple] checking isolated runtime'
 docker version *> $null
 if ($LASTEXITCODE -ne 0) { throw 'Docker Engine is not available.' }
@@ -71,13 +57,14 @@ if (-not (Test-Path $ComposeFile)) { throw "Maple compose file is missing: $Comp
 if (-not (Test-Path $CaddyFile)) { throw "Maple Caddyfile is missing: $CaddyFile" }
 if (-not (Test-Path $VerifyScript)) { throw "Maple verification script is missing: $VerifyScript" }
 
-@($RuntimeRoot, $DbDataRoot, $PythonDepsRoot, $BackupRoot, $TunnelRuntimeRoot) | ForEach-Object {
+@($RuntimeRoot, $DbDataRoot, $PythonDepsRoot, $BackupRoot) | ForEach-Object {
     New-Item -ItemType Directory -Force -Path $_ | Out-Null
 }
 
 if (-not (Test-Path $RuntimeEnv)) {
     @"
 MAPLE_LOCAL_PORT=9040
+MAPLE_PUBLIC_PORT=9040
 ADMIN_TOKEN=$(New-SecretValue)
 DEFAULT_FEE_RATE=0.05
 CORS_ORIGINS=
@@ -92,6 +79,7 @@ DB_ROOT_PASSWORD=$(New-SecretValue)
 $envMap = Read-EnvFile $RuntimeEnv
 $dbHasExistingData = $null -ne (Get-ChildItem $DbDataRoot -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
 Add-EnvSetting $RuntimeEnv $envMap 'MAPLE_LOCAL_PORT' '9040'
+Add-EnvSetting $RuntimeEnv $envMap 'MAPLE_PUBLIC_PORT' '9040'
 Add-EnvSetting $RuntimeEnv $envMap 'DEFAULT_FEE_RATE' '0.05'
 Add-EnvSetting $RuntimeEnv $envMap 'DB_NAME' 'maple_craft'
 Add-EnvSetting $RuntimeEnv $envMap 'DB_USER' 'maple_app'
@@ -105,35 +93,19 @@ if (($missingDbPassword -or $missingRootPassword) -and $dbHasExistingData) {
 if ($missingDbPassword) { Add-EnvSetting $RuntimeEnv $envMap 'DB_PASSWORD' (New-SecretValue) }
 if ($missingRootPassword) { Add-EnvSetting $RuntimeEnv $envMap 'DB_ROOT_PASSWORD' (New-SecretValue) }
 
-foreach ($key in @('MAPLE_LOCAL_PORT', 'ADMIN_TOKEN', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'DB_ROOT_PASSWORD')) {
+foreach ($key in @('MAPLE_PUBLIC_PORT', 'ADMIN_TOKEN', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'DB_ROOT_PASSWORD')) {
     if (-not $envMap.ContainsKey($key) -or [string]::IsNullOrWhiteSpace([string]$envMap[$key])) {
         throw "Required Maple setting '$key' is missing."
     }
 }
 
-$localPort = 0
-if (-not [int]::TryParse([string]$envMap['MAPLE_LOCAL_PORT'], [ref]$localPort) -or $localPort -lt 1024 -or $localPort -gt 65535) {
-    throw 'MAPLE_LOCAL_PORT must be between 1024 and 65535.'
+$publicPort = 0
+if (-not [int]::TryParse([string]$envMap['MAPLE_PUBLIC_PORT'], [ref]$publicPort) -or $publicPort -lt 1024 -or $publicPort -gt 65535) {
+    throw 'MAPLE_PUBLIC_PORT must be between 1024 and 65535.'
 }
 $existingCaddy = docker ps --format '{{.Names}}' | Where-Object { $_ -eq 'maple-caddy' }
-$listener = Get-NetTCPConnection -State Listen -LocalPort $localPort -ErrorAction SilentlyContinue
-if ($listener -and -not $existingCaddy) { throw "Maple local port $localPort is already in use." }
-
-if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary -ErrorAction SilentlyContinue).Length -le 1MB) {
-    Write-Host '[maple] downloading Cloudflared runtime'
-    $url = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64'
-    $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
-    if ($curl) {
-        & $curl.Source -fL --retry 3 --connect-timeout 20 --output $CloudflaredBinary $url
-        if ($LASTEXITCODE -ne 0) { throw 'Cloudflared binary download failed.' }
-    } else {
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $CloudflaredBinary -TimeoutSec 120
-    }
-}
-if (-not (Test-Path $CloudflaredBinary) -or (Get-Item $CloudflaredBinary).Length -le 1MB) {
-    throw 'Cloudflared binary is missing or invalid.'
-}
+$listener = Get-NetTCPConnection -State Listen -LocalPort $publicPort -ErrorAction SilentlyContinue
+if ($listener -and -not $existingCaddy) { throw "Maple public port $publicPort is already in use." }
 
 foreach ($image in @('maple-production-app:latest', 'mariadb:11.4', 'caddy:2.10-alpine')) {
     docker image inspect $image *> $null
@@ -169,7 +141,6 @@ Get-ChildItem $BackupRoot -Filter 'maple_*.sql' -File -ErrorAction SilentlyConti
 $env:MAPLE_DB_DATA_DIR = ($DbDataRoot -replace '\\', '/')
 $env:MAPLE_PYTHON_DEPS_DIR = ($PythonDepsRoot -replace '\\', '/')
 $env:MAPLE_CADDYFILE = ($CaddyFile -replace '\\', '/')
-$env:MAPLE_CLOUDFLARED_BINARY = ($CloudflaredBinary -replace '\\', '/')
 
 Write-Host '[maple] validating production compose'
 docker compose --env-file $RuntimeEnv -p maple-production -f $ComposeFile config *> $null
@@ -179,7 +150,7 @@ Write-Host '[maple] starting production containers'
 docker compose --env-file $RuntimeEnv -p maple-production -f $ComposeFile up -d --no-build --pull never --remove-orphans
 if ($LASTEXITCODE -ne 0) { throw 'Maple docker compose deployment failed.' }
 
-$localBase = "http://127.0.0.1:$localPort"
+$localBase = "http://127.0.0.1:$publicPort"
 $localReady = $false
 for ($attempt = 1; $attempt -le 48; $attempt++) {
     try {
@@ -203,18 +174,10 @@ Write-Host '[maple] verifying fixed Meisterville rules'
 Get-Content $VerifyScript -Raw | docker exec -i maple-app python -
 if ($LASTEXITCODE -ne 0) { throw 'Maple fixed-rule verification failed.' }
 
-$publicUrl = $null
-for ($attempt = 1; $attempt -le 36; $attempt++) {
-    $publicUrl = Get-TunnelUrl
-    if ($publicUrl) { break }
-    Start-Sleep -Seconds 5
-}
-if (-not $publicUrl) { throw 'Cloudflare Quick Tunnel did not provide a public URL.' }
-
 $ExpectedSha | Set-Content -Path $MarkerFile -Encoding ascii
 Write-Host '[maple] deployment complete'
 Write-Host "[maple] local URL: $localBase"
-Write-Host "[maple] public URL: $publicUrl"
+Write-Host "[maple] forwarded URL: http://yellow.it.kr:$publicPort"
 Write-Host "[maple] source SHA: $ExpectedSha"
 Write-Host "[maple] Meisterville categories: $($categoryKeys -join ', ')"
 Write-Host "[maple] Meisterville recipes: $($meta.total_recipe_count)"
