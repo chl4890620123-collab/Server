@@ -1,0 +1,83 @@
+name: Internal reset production runtime
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  reset:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Reset managed production containers
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SERVER_HOST" ] || [ -z "$SERVER_USER" ] || { [ -z "$SERVER_SSH_KEY" ] && [ -z "$SERVER_PASSWORD" ]; }; then
+            echo 'Server SSH secrets are not configured in the Server repository.' >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+          port="${SERVER_PORT:-22}"
+          key_args=()
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/server_reset_key"
+            chmod 600 "$HOME/.ssh/server_reset_key"
+            key_args=(-i "$HOME/.ssh/server_reset_key")
+          fi
+          if [ -n "$SERVER_PASSWORD" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SERVER_PASSWORD"
+            auth=(sshpass -e ssh "${key_args[@]}")
+          else
+            auth=(ssh "${key_args[@]}")
+          fi
+          ssh_options=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+
+          remote_script="$RUNNER_TEMP/reset-production.ps1"
+          cat > "$remote_script" <<'PWSH'
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          $serverPath = 'C:\home\server\app'
+          if (-not (Test-Path (Join-Path $serverPath '.git'))) {
+              New-Item -ItemType Directory -Force -Path (Split-Path $serverPath -Parent) | Out-Null
+              git clone 'https://github.com/chl4890620123-collab/Server.git' $serverPath
+              if ($LASTEXITCODE -ne 0) { throw 'Server clone failed' }
+          }
+          git -C $serverPath reset --hard HEAD
+          git -C $serverPath clean -fd
+          git -C $serverPath fetch --prune origin main
+          if ($LASTEXITCODE -ne 0) { throw 'Server fetch failed' }
+          git -C $serverPath checkout -B main origin/main
+          git -C $serverPath reset --hard origin/main
+          Set-Location $serverPath
+          & '.\deploy\scripts\reset-production.ps1'
+          if (-not $?) { throw 'Production reset failed' }
+          PWSH
+          wrapper='$script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
+          encoded_wrapper="$(printf '%s' "$wrapper" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
+          remote_command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded_wrapper"
+
+          for attempt in 1 2 3 4; do
+            set +e
+            output="$(timeout 8m "${auth[@]}" -p "$port" "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "$remote_command" < "$remote_script" 2>&1)"
+            code=$?
+            set -e
+            printf '%s\n' "$output"
+            if [ "$code" = 0 ]; then exit 0; fi
+            if printf '%s' "$output" | grep -Eq 'Connection reset by peer|kex_exchange_identification|Connection timed out|Connection refused'; then
+              sleep $((attempt * 8))
+              continue
+            fi
+            exit "$code"
+          done
+          exit 255
