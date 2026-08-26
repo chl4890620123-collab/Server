@@ -57,38 +57,54 @@ Write-Host "[$Service] source SHA: $sourceSha"
 docker version *> $null
 if ($LASTEXITCODE -ne 0) { throw 'Docker Engine is not available.' }
 
-switch ($Service) {
-    'maple' {
-        Write-Host '[maple] building isolated application image'
-        docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t maple-production-app:latest $sourceDir
-        if ($LASTEXITCODE -ne 0) { throw '[maple] Docker build failed' }
-        & (Join-Path $ServerRoot 'deploy\scripts\deploy-maple.ps1') -ExpectedSha $sourceSha
-        if (-not $?) { throw '[maple] deployment failed' }
+$previousDockerConfig = $env:DOCKER_CONFIG
+$dockerConfigRoot = Join-Path $env:TEMP ("server-docker-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force -Path $dockerConfigRoot | Out-Null
+'{"auths":{}}' | Set-Content -Path (Join-Path $dockerConfigRoot 'config.json') -Encoding ascii
+$env:DOCKER_CONFIG = $dockerConfigRoot
+Write-Host "[$Service] using isolated Docker CLI config without credential helper"
+
+try {
+    switch ($Service) {
+        'maple' {
+            Write-Host '[maple] building isolated application image'
+            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t maple-production-app:latest $sourceDir
+            if ($LASTEXITCODE -ne 0) { throw '[maple] Docker build failed' }
+            & (Join-Path $ServerRoot 'deploy\scripts\deploy-maple.ps1') -ExpectedSha $sourceSha
+            if (-not $?) { throw '[maple] deployment failed' }
+        }
+        'aitm' {
+            Write-Host '[aitm] building isolated service images'
+            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-ai:latest (Join-Path $sourceDir 'demo\ai')
+            if ($LASTEXITCODE -ne 0) { throw '[aitm] AI build failed' }
+            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-backend:latest (Join-Path $sourceDir 'demo')
+            if ($LASTEXITCODE -ne 0) { throw '[aitm] backend build failed' }
+            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-frontend:latest (Join-Path $sourceDir 'front')
+            if ($LASTEXITCODE -ne 0) { throw '[aitm] frontend build failed' }
+            & (Join-Path $ServerRoot 'deploy\scripts\deploy-aitm.ps1') -ExpectedSha $sourceSha -Force:$Force
+            if (-not $?) { throw '[aitm] deployment failed' }
+        }
+        'restok' {
+            Write-Host '[restok] building isolated service images'
+            docker build --pull -t restok-production-ai:latest (Join-Path $sourceDir 'ai_server')
+            if ($LASTEXITCODE -ne 0) { throw '[restok] AI build failed' }
+            docker build --pull -t restok-production-backend:latest (Join-Path $sourceDir 'backend')
+            if ($LASTEXITCODE -ne 0) { throw '[restok] backend build failed' }
+            docker build --pull --build-arg REACT_APP_API_URL= -t restok-production-frontend:latest (Join-Path $sourceDir 'frontend')
+            if ($LASTEXITCODE -ne 0) { throw '[restok] frontend build failed' }
+            & (Join-Path $ServerRoot 'deploy\scripts\check-restok-legacy-data.ps1')
+            if (-not $?) { throw '[restok] legacy-data preflight failed' }
+            & (Join-Path $ServerRoot 'deploy\scripts\deploy-restok.ps1') -Force:$Force -Prebuilt
+            if (-not $?) { throw '[restok] deployment failed' }
+        }
     }
-    'aitm' {
-        Write-Host '[aitm] building isolated service images'
-        docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-ai:latest (Join-Path $sourceDir 'demo\ai')
-        if ($LASTEXITCODE -ne 0) { throw '[aitm] AI build failed' }
-        docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-backend:latest (Join-Path $sourceDir 'demo')
-        if ($LASTEXITCODE -ne 0) { throw '[aitm] backend build failed' }
-        docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-frontend:latest (Join-Path $sourceDir 'front')
-        if ($LASTEXITCODE -ne 0) { throw '[aitm] frontend build failed' }
-        & (Join-Path $ServerRoot 'deploy\scripts\deploy-aitm.ps1') -ExpectedSha $sourceSha -Force:$Force
-        if (-not $?) { throw '[aitm] deployment failed' }
+} finally {
+    if ([string]::IsNullOrWhiteSpace($previousDockerConfig)) {
+        Remove-Item Env:DOCKER_CONFIG -ErrorAction SilentlyContinue
+    } else {
+        $env:DOCKER_CONFIG = $previousDockerConfig
     }
-    'restok' {
-        Write-Host '[restok] building isolated service images'
-        docker build --pull -t restok-production-ai:latest (Join-Path $sourceDir 'ai_server')
-        if ($LASTEXITCODE -ne 0) { throw '[restok] AI build failed' }
-        docker build --pull -t restok-production-backend:latest (Join-Path $sourceDir 'backend')
-        if ($LASTEXITCODE -ne 0) { throw '[restok] backend build failed' }
-        docker build --pull --build-arg REACT_APP_API_URL= -t restok-production-frontend:latest (Join-Path $sourceDir 'frontend')
-        if ($LASTEXITCODE -ne 0) { throw '[restok] frontend build failed' }
-        & (Join-Path $ServerRoot 'deploy\scripts\check-restok-legacy-data.ps1')
-        if (-not $?) { throw '[restok] legacy-data preflight failed' }
-        & (Join-Path $ServerRoot 'deploy\scripts\deploy-restok.ps1') -Force:$Force -Prebuilt
-        if (-not $?) { throw '[restok] deployment failed' }
-    }
+    Remove-Item -Recurse -Force $dockerConfigRoot -ErrorAction SilentlyContinue
 }
 
 Write-Host "[$Service] Server deployment complete"
