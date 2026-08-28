@@ -14,6 +14,10 @@ on:
         required: false
         default: false
         type: boolean
+  push:
+    branches: [main]
+    paths:
+      - '.ops-trigger/maple.txt'
 
 permissions:
   contents: read
@@ -24,15 +28,15 @@ concurrency:
 
 jobs:
   deploy-maple:
-    if: ${{ inputs.target == 'all' || inputs.target == 'maple' }}
+    if: ${{ github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'maple' }}
     uses: ./.github/workflows/_deploy-service.yml
     with:
       service: maple
-      force: ${{ inputs.force }}
+      force: ${{ github.event_name == 'push' || inputs.force }}
     secrets: inherit
 
   deploy-restok:
-    if: ${{ inputs.target == 'all' || inputs.target == 'restok' }}
+    if: ${{ github.event_name != 'push' && (inputs.target == 'all' || inputs.target == 'restok') }}
     uses: ./.github/workflows/_deploy-service.yml
     with:
       service: restok
