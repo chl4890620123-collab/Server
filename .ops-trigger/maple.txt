@@ -1,0 +1,2 @@
+Maple production deployment trigger
+Requested after CI success for maple main commit 6f2dd6830d30780c1cba087effc977ef686a607c.
