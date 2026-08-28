@@ -8,50 +8,31 @@ on:
         required: true
         default: all
         type: choice
-        options: [all, maple, aitm, restok]
+        options: [all, maple, restok]
       force:
         description: Force redeploy
         required: false
         default: false
         type: boolean
-  schedule:
-    - cron: '*/15 * * * *'
 
 permissions:
   contents: read
 
-# Server is the only deployment entrypoint. One orchestrator run owns the queue.
 concurrency:
   group: production-deployment-orchestrator
   cancel-in-progress: false
 
 jobs:
-  # Priority 1 and 2 may run together. This is the hard cap for long-running deploys.
-  priority-wave:
-    if: ${{ github.event_name == 'schedule' || inputs.target == 'all' || inputs.target == 'maple' || inputs.target == 'aitm' }}
-    strategy:
-      fail-fast: false
-      max-parallel: 2
-      matrix:
-        service: [maple, aitm]
+  deploy-maple:
+    if: ${{ inputs.target == 'all' || inputs.target == 'maple' }}
     uses: ./.github/workflows/_deploy-service.yml
     with:
-      service: ${{ matrix.service }}
-      force: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+      service: maple
+      force: ${{ inputs.force }}
     secrets: inherit
 
-  # Priority 3 starts only after the first wave has released capacity.
-  restok-after-wave:
-    if: ${{ always() && (github.event_name == 'schedule' || inputs.target == 'all') }}
-    needs: [priority-wave]
-    uses: ./.github/workflows/_deploy-service.yml
-    with:
-      service: restok
-      force: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
-    secrets: inherit
-
-  restok-only:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.target == 'restok' }}
+  deploy-restok:
+    if: ${{ inputs.target == 'all' || inputs.target == 'restok' }}
     uses: ./.github/workflows/_deploy-service.yml
     with:
       service: restok
