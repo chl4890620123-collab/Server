@@ -61,33 +61,11 @@ services:
       maple-app:
         condition: service_started
     ports:
-      - "127.0.0.1:${MAPLE_LOCAL_PORT:-9040}:8080"
+      - "${MAPLE_PUBLIC_PORT:-9040}:8080"
     volumes:
       - type: bind
         source: ${MAPLE_CADDYFILE:?MAPLE_CADDYFILE is required}
         target: /etc/caddy/Caddyfile
-        read_only: true
-    networks:
-      - maple-internal
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
-  maple-public-tunnel:
-    image: caddy:2.10-alpine
-    pull_policy: never
-    container_name: maple-public-tunnel
-    restart: unless-stopped
-    depends_on:
-      - maple-caddy
-    entrypoint: ["/usr/local/bin/cloudflared"]
-    command: ["tunnel", "--no-autoupdate", "--url", "http://maple-caddy:8080"]
-    volumes:
-      - type: bind
-        source: ${MAPLE_CLOUDFLARED_BINARY:?MAPLE_CLOUDFLARED_BINARY is required}
-        target: /usr/local/bin/cloudflared
         read_only: true
     networks:
       - maple-internal
