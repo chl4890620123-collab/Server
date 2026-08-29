@@ -21,7 +21,7 @@ permissions:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     outputs:
       public_url: ${{ steps.verify.outputs.public_url }}
     steps:
@@ -57,9 +57,7 @@ jobs:
             echo 'Server SSH secrets are not configured in the Server repository.' >&2
             exit 1
           fi
-
-          mkdir -p "$HOME/.ssh"
-          chmod 700 "$HOME/.ssh"
+          mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
           port="${SERVER_PORT:-22}"
           key_args=()
           if [ -n "$SERVER_SSH_KEY" ]; then
@@ -68,15 +66,13 @@ jobs:
             key_args=(-i "$HOME/.ssh/server_deploy_key")
           fi
           if [ -n "$SERVER_PASSWORD" ]; then
-            sudo apt-get update -qq
-            sudo apt-get install -y -qq sshpass
+            sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
             export SSHPASS="$SERVER_PASSWORD"
             auth=(sshpass -e ssh "${key_args[@]}")
           else
             auth=(ssh "${key_args[@]}")
           fi
-          ssh_options=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=20 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
-
+          ssh_options=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o ServerAliveInterval=10 -o ServerAliveCountMax=180 -o TCPKeepAlive=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
           if [ "$FORCE" = true ]; then force_arg=' -Force'; else force_arg=''; fi
           remote_script="$RUNNER_TEMP/${SERVICE}-deploy.ps1"
           cat > "$remote_script" <<PWSH
@@ -89,38 +85,26 @@ jobs:
               git clone 'https://github.com/chl4890620123-collab/Server.git' \$serverPath
               if (\$LASTEXITCODE -ne 0) { throw 'Server clone failed' }
           }
-          git -C \$serverPath reset --hard HEAD
-          git -C \$serverPath clean -fd
-          git -C \$serverPath fetch --prune origin main
+          git -C \$serverPath fetch --force --prune origin '+refs/heads/main:refs/remotes/origin/main'
           if (\$LASTEXITCODE -ne 0) { throw 'Server fetch failed' }
-          git -C \$serverPath checkout -B main origin/main
-          git -C \$serverPath reset --hard origin/main
+          \$remoteSha = (git -C \$serverPath rev-parse refs/remotes/origin/main | Out-String).Trim()
+          git -C \$serverPath checkout -B main \$remoteSha
+          git -C \$serverPath reset --hard \$remoteSha
           git -C \$serverPath clean -fd
+          \$localSha = (git -C \$serverPath rev-parse HEAD | Out-String).Trim()
+          if (\$localSha -ne \$remoteSha) { throw "Server checkout mismatch: local=\$localSha remote=\$remoteSha" }
           Set-Location \$serverPath
           & '.\deploy\scripts\deploy-service.ps1' -Service '$SERVICE'$force_arg
           if (-not \$?) { throw '$SERVICE deployment failed' }
           PWSH
-
           wrapper='$script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
           encoded_wrapper="$(printf '%s' "$wrapper" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
           remote_command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded_wrapper"
-
-          code=255
           : > "$RUNNER_TEMP/${SERVICE}-ssh-output.txt"
-          for attempt in 1 2 3 4; do
-            set +e
-            output="$(timeout 35m "${auth[@]}" -p "$port" "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "$remote_command" < "$remote_script" 2>&1)"
-            code=$?
-            set -e
-            printf '%s\n' "$output" | tee "$RUNNER_TEMP/${SERVICE}-ssh-output.txt"
-            if [ "$code" = 0 ]; then break; fi
-            if grep -Eq 'Connection reset by peer|kex_exchange_identification|Connection timed out|Connection refused' "$RUNNER_TEMP/${SERVICE}-ssh-output.txt"; then
-              echo "SSH transport failed for $SERVICE; retry $attempt/4" >&2
-              sleep $((attempt * 8))
-              continue
-            fi
-            break
-          done
+          set +e
+          timeout 50m "${auth[@]}" -p "$port" "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "$remote_command" < "$remote_script" 2>&1 | tee "$RUNNER_TEMP/${SERVICE}-ssh-output.txt"
+          code=${PIPESTATUS[0]}
+          set -e
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" != 0 ]; then exit "$code"; fi
 
@@ -133,25 +117,20 @@ jobs:
         run: |
           set -euo pipefail
           output_file="$RUNNER_TEMP/${SERVICE}-ssh-output.txt"
-          public_url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com' "$output_file" | tail -n1 || true)"
+          public_url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com|http://yellow\.it\.kr:[0-9]+' "$output_file" | tail -n1 || true)"
           source_sha="$(grep -Eo "\[$SERVICE\] source SHA: [0-9a-f]{40}" "$output_file" | tail -n1 | awk '{print $4}' || true)"
           if [ -z "$public_url" ] || [ -z "$source_sha" ]; then
             echo 'Deployment output did not contain a public URL and source SHA.' >&2
             exit 1
           fi
-
-          root_ok=false
-          api_ok=false
-          for attempt in 1 2 3 4 5 6; do
+          root_ok=false; api_ok=false
+          for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
             curl --fail --silent --show-error --max-time 15 "$public_url/" >/dev/null && root_ok=true || true
             curl --fail --silent --show-error --max-time 15 "$public_url$FUNCTIONAL_PATH" >/dev/null && api_ok=true || true
             if [ "$root_ok" = true ] && [ "$api_ok" = true ]; then break; fi
             sleep 5
           done
-          if [ "$root_ok" != true ] || [ "$api_ok" != true ]; then
-            echo "$SERVICE public verification failed." >&2
-            exit 1
-          fi
+          if [ "$root_ok" != true ] || [ "$api_ok" != true ]; then echo "$SERVICE public verification failed." >&2; exit 1; fi
           echo "public_url=$public_url" >> "$GITHUB_OUTPUT"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "$SERVICE verified: $public_url"
