@@ -17,81 +17,43 @@ function Test-DockerEngine {
     $ErrorActionPreference = 'SilentlyContinue'
     try {
         $output = docker version 2>&1 | Out-String
-        return [pscustomobject]@{
-            Ready = ($LASTEXITCODE -eq 0)
-            Output = $output.Trim()
-        }
-    } finally {
-        $ErrorActionPreference = $previousPreference
-    }
+        return [pscustomobject]@{ Ready = ($LASTEXITCODE -eq 0); Output = $output.Trim() }
+    } finally { $ErrorActionPreference = $previousPreference }
 }
 
 function Wait-DockerEngine {
     param([string]$Name)
-
     $serviceRestartAttempted = $false
     $desktopStartAttempted = $false
     for ($attempt = 1; $attempt -le 18; $attempt++) {
         $probe = Test-DockerEngine
-        if ($probe.Ready) {
-            Write-Host "[$Name] Docker Linux Engine ready on attempt $attempt"
-            return
-        }
-
+        if ($probe.Ready) { Write-Host "[$Name] Docker Linux Engine ready on attempt $attempt"; return }
         if ($attempt -eq 3 -and -not $serviceRestartAttempted) {
             $serviceRestartAttempted = $true
-            Write-Host "[$Name] Docker Engine unhealthy; attempting com.docker.service restart"
             try {
                 $dockerService = Get-Service -Name 'com.docker.service' -ErrorAction Stop
-                if ($dockerService.Status -eq 'Running') {
-                    Restart-Service -Name 'com.docker.service' -Force -ErrorAction Stop
-                } else {
-                    Start-Service -Name 'com.docker.service' -ErrorAction Stop
-                }
-            } catch {
-                Write-Warning "[$Name] Docker service restart was not available: $($_.Exception.Message)"
-            }
+                if ($dockerService.Status -eq 'Running') { Restart-Service -Name 'com.docker.service' -Force -ErrorAction Stop } else { Start-Service -Name 'com.docker.service' -ErrorAction Stop }
+            } catch { Write-Warning "[$Name] Docker service restart was not available: $($_.Exception.Message)" }
         }
-
         if ($attempt -eq 7 -and -not $desktopStartAttempted) {
             $desktopStartAttempted = $true
             $desktopExe = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
-            if (Test-Path $desktopExe) {
-                Write-Host "[$Name] requesting Docker Desktop startup"
-                try {
-                    Start-Process -FilePath $desktopExe -WindowStyle Hidden -ErrorAction Stop | Out-Null
-                } catch {
-                    Write-Warning "[$Name] Docker Desktop startup request failed: $($_.Exception.Message)"
-                }
-            }
+            if (Test-Path $desktopExe) { try { Start-Process -FilePath $desktopExe -WindowStyle Hidden -ErrorAction Stop | Out-Null } catch { Write-Warning "[$Name] Docker Desktop startup request failed: $($_.Exception.Message)" } }
         }
-
-        if ($attempt -eq 18) {
-            throw "Docker Linux Engine did not become ready. Last response: $($probe.Output)"
-        }
+        if ($attempt -eq 18) { throw "Docker Linux Engine did not become ready. Last response: $($probe.Output)" }
         Start-Sleep -Seconds 5
     }
 }
 
 $services = @{
-    maple = @{
-        Repository = 'https://github.com/chl4890620123-collab/maple.git'
-        SourceDir = Join-Path $SourcesRoot 'maple'
-    }
-    aitm = @{
-        Repository = 'https://github.com/chl4890620123-collab/Aitm.git'
-        SourceDir = Join-Path $SourcesRoot 'aitm'
-    }
-    restok = @{
-        Repository = 'https://github.com/chl4890620123-collab/Restok-Rangchain.git'
-        SourceDir = Join-Path $SourcesRoot 'restok'
-    }
+    maple = @{ Repository = 'https://github.com/chl4890620123-collab/maple.git'; SourceDir = Join-Path $SourcesRoot 'maple' }
+    aitm = @{ Repository = 'https://github.com/chl4890620123-collab/Aitm.git'; SourceDir = Join-Path $SourcesRoot 'aitm' }
+    restok = @{ Repository = 'https://github.com/chl4890620123-collab/Restok-Rangchain.git'; SourceDir = Join-Path $SourcesRoot 'restok' }
 }
 
 $spec = $services[$Service]
 $sourceDir = [string]$spec.SourceDir
 $repository = [string]$spec.Repository
-
 Write-Host "[$Service] isolated source: $sourceDir"
 if (-not (Test-Path (Join-Path $sourceDir '.git'))) {
     if (Test-Path $sourceDir) { Remove-Item -Recurse -Force $sourceDir }
@@ -99,21 +61,26 @@ if (-not (Test-Path (Join-Path $sourceDir '.git'))) {
     if ($LASTEXITCODE -ne 0) { throw "[$Service] clone failed" }
 }
 
+git -C $sourceDir remote set-url origin $repository
+if ($LASTEXITCODE -ne 0) { throw "[$Service] remote reset failed" }
 git -C $sourceDir reset --hard HEAD
 if ($LASTEXITCODE -ne 0) { throw "[$Service] reset failed" }
 git -C $sourceDir clean -fd
 if ($LASTEXITCODE -ne 0) { throw "[$Service] clean failed" }
-git -C $sourceDir fetch --prune origin main
+git -C $sourceDir fetch --force --prune origin '+refs/heads/main:refs/remotes/origin/main'
 if ($LASTEXITCODE -ne 0) { throw "[$Service] fetch failed" }
-git -C $sourceDir checkout -B main origin/main
+$remoteSha = (git -C $sourceDir rev-parse refs/remotes/origin/main | Out-String).Trim()
+if ($remoteSha -notmatch '^[0-9a-f]{40}$') { throw "[$Service] invalid remote main SHA" }
+git -C $sourceDir checkout -B main $remoteSha
 if ($LASTEXITCODE -ne 0) { throw "[$Service] checkout failed" }
-git -C $sourceDir reset --hard origin/main
+git -C $sourceDir reset --hard $remoteSha
 if ($LASTEXITCODE -ne 0) { throw "[$Service] main reset failed" }
 git -C $sourceDir clean -fd
 if ($LASTEXITCODE -ne 0) { throw "[$Service] final clean failed" }
 $sourceSha = (git -C $sourceDir rev-parse HEAD | Out-String).Trim()
-if ($sourceSha -notmatch '^[0-9a-f]{40}$') { throw "[$Service] invalid source SHA" }
+if ($sourceSha -ne $remoteSha) { throw "[$Service] checkout mismatch: local=$sourceSha remote=$remoteSha" }
 Write-Host "[$Service] source SHA: $sourceSha"
+Write-Host "[$Service] verified remote main SHA: $remoteSha"
 
 $previousDockerConfig = $env:DOCKER_CONFIG
 $previousDockerApiVersion = $env:DOCKER_API_VERSION
@@ -123,20 +90,16 @@ New-Item -ItemType Directory -Force -Path $dockerConfigRoot | Out-Null
 $env:DOCKER_CONFIG = $dockerConfigRoot
 $env:DOCKER_API_VERSION = '1.44'
 Write-Host "[$Service] using isolated Docker CLI config and compatible API version"
-
 try {
     Wait-DockerEngine -Name $Service
-
     switch ($Service) {
         'maple' {
-            Write-Host '[maple] building isolated application image'
             docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t maple-production-app:latest $sourceDir
             if ($LASTEXITCODE -ne 0) { throw '[maple] Docker build failed' }
             & (Join-Path $ServerRoot 'deploy\scripts\deploy-maple.ps1') -ExpectedSha $sourceSha
             if (-not $?) { throw '[maple] deployment failed' }
         }
         'aitm' {
-            Write-Host '[aitm] building isolated service images'
             docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-ai:latest (Join-Path $sourceDir 'demo\ai')
             if ($LASTEXITCODE -ne 0) { throw '[aitm] AI build failed' }
             docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-backend:latest (Join-Path $sourceDir 'demo')
@@ -147,7 +110,6 @@ try {
             if (-not $?) { throw '[aitm] deployment failed' }
         }
         'restok' {
-            Write-Host '[restok] building isolated service images'
             docker build --pull -t restok-production-ai:latest (Join-Path $sourceDir 'ai_server')
             if ($LASTEXITCODE -ne 0) { throw '[restok] AI build failed' }
             docker build --pull -t restok-production-backend:latest (Join-Path $sourceDir 'backend')
@@ -161,18 +123,9 @@ try {
         }
     }
 } finally {
-    if ([string]::IsNullOrWhiteSpace($previousDockerConfig)) {
-        Remove-Item Env:DOCKER_CONFIG -ErrorAction SilentlyContinue
-    } else {
-        $env:DOCKER_CONFIG = $previousDockerConfig
-    }
-    if ([string]::IsNullOrWhiteSpace($previousDockerApiVersion)) {
-        Remove-Item Env:DOCKER_API_VERSION -ErrorAction SilentlyContinue
-    } else {
-        $env:DOCKER_API_VERSION = $previousDockerApiVersion
-    }
+    if ([string]::IsNullOrWhiteSpace($previousDockerConfig)) { Remove-Item Env:DOCKER_CONFIG -ErrorAction SilentlyContinue } else { $env:DOCKER_CONFIG = $previousDockerConfig }
+    if ([string]::IsNullOrWhiteSpace($previousDockerApiVersion)) { Remove-Item Env:DOCKER_API_VERSION -ErrorAction SilentlyContinue } else { $env:DOCKER_API_VERSION = $previousDockerApiVersion }
     Remove-Item -Recurse -Force $dockerConfigRoot -ErrorAction SilentlyContinue
 }
-
 Write-Host "[$Service] Server deployment complete"
 Write-Host "[$Service] source SHA: $sourceSha"
