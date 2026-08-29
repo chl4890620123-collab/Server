@@ -47,15 +47,47 @@ function Add-EnvSetting([string]$Path, [hashtable]$Map, [string]$Key, [string]$V
     }
 }
 
+function Invoke-NativeProcess {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [int]$TimeoutSeconds = 60,
+        [switch]$AllowFailure
+    )
+
+    $token = [guid]::NewGuid().ToString('N')
+    $stdoutPath = Join-Path $env:TEMP "maple-native-$token.out"
+    $stderrPath = Join-Path $env:TEMP "maple-native-$token.err"
+    try {
+        $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $process.Kill() } catch {}
+            throw "Command timed out after ${TimeoutSeconds}s: $FilePath $($Arguments -join ' ')"
+        }
+        $process.WaitForExit()
+        $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw -ErrorAction SilentlyContinue } else { '' }
+        $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw -ErrorAction SilentlyContinue } else { '' }
+        if ($process.ExitCode -ne 0 -and -not $AllowFailure) {
+            throw "Command failed ($($process.ExitCode)): $FilePath $($Arguments -join ' ')`n$stderr"
+        }
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            StdOut = [string]$stdout
+            StdErr = [string]$stderr
+        }
+    } finally {
+        Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Host '[maple] checking isolated runtime'
-docker version *> $null
-if ($LASTEXITCODE -ne 0) { throw 'Docker Engine is not available.' }
-docker compose version *> $null
-if ($LASTEXITCODE -ne 0) { throw 'Docker Compose is not available.' }
 if (-not (Test-Path 'D:\')) { throw 'D drive is required for Maple runtime data.' }
 if (-not (Test-Path $ComposeFile)) { throw "Maple compose file is missing: $ComposeFile" }
 if (-not (Test-Path $CaddyFile)) { throw "Maple Caddyfile is missing: $CaddyFile" }
 if (-not (Test-Path $VerifyScript)) { throw "Maple verification script is missing: $VerifyScript" }
+Write-Host '[maple] checking Docker Compose plugin'
+$composeVersion = Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', 'version', '--short') -TimeoutSeconds 30
+Write-Host "[maple] Docker Compose ready: $($composeVersion.StdOut.Trim())"
 
 @($RuntimeRoot, $DbDataRoot, $PythonDepsRoot, $BackupRoot) | ForEach-Object {
     New-Item -ItemType Directory -Force -Path $_ | Out-Null
@@ -103,30 +135,27 @@ $publicPort = 0
 if (-not [int]::TryParse([string]$envMap['MAPLE_PUBLIC_PORT'], [ref]$publicPort) -or $publicPort -lt 1024 -or $publicPort -gt 65535) {
     throw 'MAPLE_PUBLIC_PORT must be between 1024 and 65535.'
 }
-$existingCaddy = docker ps --format '{{.Names}}' | Where-Object { $_ -eq 'maple-caddy' }
-$listener = Get-NetTCPConnection -State Listen -LocalPort $publicPort -ErrorAction SilentlyContinue
-if ($listener -and -not $existingCaddy) { throw "Maple public port $publicPort is already in use." }
 
+Write-Host '[maple] checking runtime images'
 foreach ($image in @('maple-production-app:latest', 'mariadb:11.4', 'caddy:2.10-alpine')) {
-    docker image inspect $image *> $null
-    if ($LASTEXITCODE -ne 0) {
+    $imageProbe = Invoke-NativeProcess -FilePath 'docker' -Arguments @('image', 'inspect', $image) -TimeoutSeconds 45 -AllowFailure
+    if ($imageProbe.ExitCode -ne 0) {
         if ($image -eq 'maple-production-app:latest') { throw 'Maple application image is missing.' }
         Write-Host "[maple] pulling runtime image $image"
-        docker pull $image
-        if ($LASTEXITCODE -ne 0) { throw "Failed to pull runtime image: $image" }
+        Invoke-NativeProcess -FilePath 'docker' -Arguments @('pull', $image) -TimeoutSeconds 180 | Out-Null
     }
 }
 
-$inspectJson = docker image inspect 'maple-production-app:latest' | Out-String
-if ($LASTEXITCODE -ne 0) { throw 'Failed to inspect Maple application image.' }
-$inspectData = $inspectJson | ConvertFrom-Json
+$inspect = Invoke-NativeProcess -FilePath 'docker' -Arguments @('image', 'inspect', 'maple-production-app:latest') -TimeoutSeconds 45
+$inspectData = $inspect.StdOut | ConvertFrom-Json
 $revision = [string]$inspectData[0].Config.Labels.'org.opencontainers.image.revision'
 if ($revision -ne $ExpectedSha) {
     throw "Maple image revision mismatch: expected=$ExpectedSha actual=$revision"
 }
 
-$existingDb = docker ps --format '{{.Names}}' | Where-Object { $_ -eq 'maple-db' }
-if ($existingDb) {
+$psResult = Invoke-NativeProcess -FilePath 'docker' -Arguments @('ps', '--format', '{{.Names}}') -TimeoutSeconds 45
+$existingDb = @($psResult.StdOut -split "`r?`n" | Where-Object { $_ -eq 'maple-db' })
+if ($existingDb.Count -gt 0) {
     Write-Host '[maple] creating pre-deploy MariaDB backup'
     $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     docker exec maple-db sh -c 'mariadb-dump -uroot -p"$MARIADB_ROOT_PASSWORD" --single-transaction "$MARIADB_DATABASE" > /tmp/maple_backup.sql'
@@ -143,12 +172,12 @@ $env:MAPLE_PYTHON_DEPS_DIR = ($PythonDepsRoot -replace '\\', '/')
 $env:MAPLE_CADDYFILE = ($CaddyFile -replace '\\', '/')
 
 Write-Host '[maple] validating production compose'
-docker compose --env-file $RuntimeEnv -p maple-production -f $ComposeFile config *> $null
-if ($LASTEXITCODE -ne 0) { throw 'Maple docker compose configuration is invalid.' }
+Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'maple-production', '-f', $ComposeFile, 'config', '--quiet') -TimeoutSeconds 60 | Out-Null
 
 Write-Host '[maple] starting production containers'
-docker compose --env-file $RuntimeEnv -p maple-production -f $ComposeFile up -d --no-build --pull never --remove-orphans
-if ($LASTEXITCODE -ne 0) { throw 'Maple docker compose deployment failed.' }
+$composeUp = Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'maple-production', '-f', $ComposeFile, 'up', '-d', '--no-build', '--pull', 'never', '--remove-orphans') -TimeoutSeconds 180
+if (-not [string]::IsNullOrWhiteSpace($composeUp.StdOut)) { Write-Host $composeUp.StdOut.Trim() }
+if (-not [string]::IsNullOrWhiteSpace($composeUp.StdErr)) { Write-Host $composeUp.StdErr.Trim() }
 
 $localBase = "http://127.0.0.1:$publicPort"
 $localReady = $false
