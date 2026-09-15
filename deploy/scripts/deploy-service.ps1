@@ -218,6 +218,18 @@ try {
             if (-not $?) { Fail '[restok] deployment failed' }
         }
         'hub' {
+            # A previous attempt got as far as `docker compose up` and left hub-ai unhealthy,
+            # which means hub-db/hub-ai/hub-backend/hub-caddy were created (some started) and then
+            # abandoned when that attempt failed - the next attempt after that hung completely
+            # silently for the full 50-minute SSH timeout with zero output, even before git
+            # checkout, consistent with leftover containers/state from the failed attempt
+            # contending with (or wedging) this one. Force-remove any containers with these exact
+            # names before doing anything else, so every attempt starts from a clean slate. try/catch
+            # because a missing container's stderr write is promoted to a terminating error under
+            # this script's $ErrorActionPreference='Stop' regardless of stream redirection.
+            foreach ($staleContainer in @('hub-caddy', 'hub-backend', 'hub-ai', 'hub-db')) {
+                try { docker rm -f $staleContainer 2>$null | Out-Null } catch {}
+            }
             # A bare `docker pull` of these small runtime images (used later by docker compose,
             # not built from source) fails immediately with a Windows credential-helper error ("A
             # specified logon session does not exist") on this machine - reproduced regardless of
