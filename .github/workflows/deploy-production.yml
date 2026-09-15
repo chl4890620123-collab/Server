@@ -23,10 +23,6 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: production-deployment-orchestrator
-  cancel-in-progress: false
-
 jobs:
   # Push only touches the workflow via .ops-trigger/*.txt; this tells the two push-triggerable
   # deploy jobs below which one of them the push was actually for, so touching hub's trigger file
@@ -49,9 +45,16 @@ jobs:
             hub:
               - '.ops-trigger/hub.txt'
 
+  # Each service gets its own concurrency lane instead of one shared lock across every app -
+  # a stuck/slow hub deploy no longer blocks maple or restok from deploying. cancel-in-progress
+  # means retriggering the same service cancels the previous attempt immediately instead of
+  # queuing behind it until its internal timeout expires.
   deploy-maple:
     needs: [detect]
     if: ${{ always() && ((github.event_name == 'push' && needs.detect.outputs.maple == 'true') || inputs.target == 'all' || inputs.target == 'maple') }}
+    concurrency:
+      group: deploy-maple
+      cancel-in-progress: true
     uses: ./.github/workflows/_deploy-service.yml
     with:
       service: maple
@@ -60,6 +63,9 @@ jobs:
 
   deploy-restok:
     if: ${{ github.event_name != 'push' && (inputs.target == 'all' || inputs.target == 'restok') }}
+    concurrency:
+      group: deploy-restok
+      cancel-in-progress: true
     uses: ./.github/workflows/_deploy-service.yml
     with:
       service: restok
@@ -69,6 +75,9 @@ jobs:
   deploy-hub:
     needs: [detect]
     if: ${{ always() && ((github.event_name == 'push' && needs.detect.outputs.hub == 'true') || inputs.target == 'all' || inputs.target == 'hub') }}
+    concurrency:
+      group: deploy-hub
+      cancel-in-progress: true
     uses: ./.github/workflows/_deploy-service.yml
     with:
       service: hub
