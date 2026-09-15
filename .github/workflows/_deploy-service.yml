@@ -118,7 +118,7 @@ jobs:
         run: |
           set -euo pipefail
           output_file="$RUNNER_TEMP/${SERVICE}-ssh-output.txt"
-          public_url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com|http://yellow\.it\.kr:[0-9]+|https://[a-z0-9-]+\.yellow\.it\.kr' "$output_file" | tail -n1 || true)"
+          public_url="$(grep -Eo 'https://[a-z0-9-]+\.trycloudflare\.com|http://yellow\.it\.kr:[0-9]+|https://([a-z0-9-]+\.)?yellow\.it\.kr' "$output_file" | tail -n1 || true)"
           source_sha="$(grep -Eo "\[$SERVICE\] source SHA: [0-9a-f]{40}" "$output_file" | tail -n1 | awk '{print $4}' || true)"
           if [ -z "$public_url" ] || [ -z "$source_sha" ]; then
             echo 'Deployment output did not contain a public URL and source SHA.' >&2

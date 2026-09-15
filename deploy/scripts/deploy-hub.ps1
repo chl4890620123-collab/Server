@@ -99,9 +99,10 @@ HUB_ADMIN_SETUP_KEY=$(New-SecretValue)
 HUB_STT_PII_HASH_KEY=$(New-SecretValue)
 HUB_COOKIE_SECURE=false
 HUB_ENFORCE_SECURE_CONFIG=false
-HUB_PUBLIC_DOMAIN=hub.yellow.it.kr
+HUB_PUBLIC_DOMAIN=yellow.it.kr
 HUB_PUBLIC_BASE_URL=
 HUB_OUTER_CADDY_AUTO_CONFIGURE=true
+HUB_ALLOW_DOMAIN_TAKEOVER=true
 HUB_AI_MODE=gemini
 GEMINI_API_KEY=
 HUB_EMBED_MODE=e5
@@ -201,13 +202,14 @@ for ($attempt = 1; $attempt -le 48; $attempt++) {
 if (-not $localReady) { throw 'Hub local functional check failed.' }
 
 $publicDomain = [string]$envMap['HUB_PUBLIC_DOMAIN']
-if ([string]::IsNullOrWhiteSpace($publicDomain)) { $publicDomain = 'hub.yellow.it.kr' }
+if ([string]::IsNullOrWhiteSpace($publicDomain)) { $publicDomain = 'yellow.it.kr' }
 $autoConfigureOuterCaddy = ([string]$envMap['HUB_OUTER_CADDY_AUTO_CONFIGURE']).ToLowerInvariant() -eq 'true'
+$allowDomainTakeover = ([string]$envMap['HUB_ALLOW_DOMAIN_TAKEOVER']).ToLowerInvariant() -eq 'true'
 $moveAiRoot = if ($envMap.ContainsKey('MOVEAI_ROOT') -and -not [string]::IsNullOrWhiteSpace([string]$envMap['MOVEAI_ROOT'])) { [string]$envMap['MOVEAI_ROOT'] } else { 'C:/MOVEAI' }
 
 if ($autoConfigureOuterCaddy) {
     Write-Host "[hub] registering public route on the shared MOVEAI Caddy: $publicDomain -> :$publicPort"
-    & $PublicRoutePath -MoveAiRoot $moveAiRoot -Domain $publicDomain -HostPort $publicPort -AppName 'hub'
+    & $PublicRoutePath -MoveAiRoot $moveAiRoot -Domain $publicDomain -HostPort $publicPort -AppName 'hub' -AllowTakeover:$allowDomainTakeover
     if (-not $?) { throw 'Public route registration failed.' }
 } else {
     Write-Host '[hub] HUB_OUTER_CADDY_AUTO_CONFIGURE=false; existing MOVEAI Caddyfile was not modified.'
