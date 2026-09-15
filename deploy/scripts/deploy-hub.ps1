@@ -76,8 +76,13 @@ function Invoke-Docker {
     # docker commands on this machine - a `docker image inspect` through it reported an image as
     # missing moments after a direct `docker build` had put it in the local cache. Invoke docker
     # directly via Process.Start instead (the same mechanism proven reliable for build/pull
-    # elsewhere in this deploy), capturing output through redirected streams so callers can still
-    # read StdOut/StdErr.
+    # elsewhere in this deploy).
+    #
+    # First version read StdOut then StdErr synchronously via .ReadToEnd() after WaitForExit,
+    # which deadlocked (timed out) the moment output was large enough to fill the OS pipe buffer
+    # while nothing was draining it - hit immediately by `docker image inspect` on a large,
+    # multi-stage image. Read both streams asynchronously via DataReceived events instead, which
+    # drain continuously in the background regardless of size, before ever calling WaitForExit.
     param(
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [int]$TimeoutSeconds = 60,
@@ -89,13 +94,36 @@ function Invoke-Docker {
     $psi.RedirectStandardOutput = $true
     $psi.RedirectStandardError = $true
     $psi.UseShellExecute = $false
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
-        try { $proc.Kill() } catch {}
-        Fail "Command timed out after ${TimeoutSeconds}s: docker $($Arguments -join ' ')"
+
+    $proc = New-Object System.Diagnostics.Process
+    $proc.StartInfo = $psi
+
+    $stdoutBuilder = New-Object System.Text.StringBuilder
+    $stderrBuilder = New-Object System.Text.StringBuilder
+    $stdoutEvent = Register-ObjectEvent -InputObject $proc -EventName OutputDataReceived -MessageData $stdoutBuilder -Action {
+        if ($null -ne $EventArgs.Data) { [void]$Event.MessageData.AppendLine($EventArgs.Data) }
     }
-    $stdout = $proc.StandardOutput.ReadToEnd()
-    $stderr = $proc.StandardError.ReadToEnd()
+    $stderrEvent = Register-ObjectEvent -InputObject $proc -EventName ErrorDataReceived -MessageData $stderrBuilder -Action {
+        if ($null -ne $EventArgs.Data) { [void]$Event.MessageData.AppendLine($EventArgs.Data) }
+    }
+    try {
+        $proc.Start() | Out-Null
+        $proc.BeginOutputReadLine()
+        $proc.BeginErrorReadLine()
+        if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+            try { $proc.Kill() } catch {}
+            Fail "Command timed out after ${TimeoutSeconds}s: docker $($Arguments -join ' ')"
+        }
+        $proc.WaitForExit()
+    } finally {
+        Unregister-Event -SourceIdentifier $stdoutEvent.Name -ErrorAction SilentlyContinue
+        Unregister-Event -SourceIdentifier $stderrEvent.Name -ErrorAction SilentlyContinue
+        Remove-Job -Id $stdoutEvent.Id -Force -ErrorAction SilentlyContinue
+        Remove-Job -Id $stderrEvent.Id -Force -ErrorAction SilentlyContinue
+    }
+
+    $stdout = $stdoutBuilder.ToString()
+    $stderr = $stderrBuilder.ToString()
     if ($proc.ExitCode -ne 0 -and -not $AllowFailure) {
         Fail "Command failed ($($proc.ExitCode)): docker $($Arguments -join ' ')`n$stderr"
     }
