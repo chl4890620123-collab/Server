@@ -191,7 +191,14 @@ foreach ($image in @('pgvector/pgvector:pg16', 'caddy:2.10-alpine')) {
     $imageProbe = Invoke-NativeProcess -FilePath 'docker' -Arguments @('image', 'inspect', $image) -TimeoutSeconds 45 -AllowFailure
     if ($imageProbe.ExitCode -ne 0) {
         Say "[hub] pulling runtime image $image"
-        Invoke-NativeProcess -FilePath 'docker' -Arguments @('pull', $image) -TimeoutSeconds 180 | Out-Null
+        # `docker pull` via Invoke-NativeProcess/Start-Process was observed to fail here with a
+        # Windows credential-helper error ("A specified logon session does not exist") even for
+        # this fully public, anonymous image - while `docker build --pull` elsewhere in this same
+        # deploy (same isolated DOCKER_CONFIG, same SSH session) pulls public base images (python,
+        # node, gradle, temurin) without issue. Invoke it as a direct native command instead,
+        # matching the pattern that's proven reliable on this machine.
+        docker pull $image
+        if ($LASTEXITCODE -ne 0) { Fail "Failed to pull runtime image: $image" }
     }
 }
 foreach ($image in @('hub-production-ai:latest', 'hub-production-backend:latest')) {
