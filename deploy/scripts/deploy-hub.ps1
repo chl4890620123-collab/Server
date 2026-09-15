@@ -70,32 +70,36 @@ function Add-EnvSetting([string]$Path, [hashtable]$Map, [string]$Key, [string]$V
     }
 }
 
-function Invoke-NativeProcess {
+function Invoke-Docker {
+    # Started as a Start-Process-based helper (Invoke-NativeProcess), but Start-Process-spawned
+    # docker children were observed not resolving the same config/context as directly-invoked
+    # docker commands on this machine - a `docker image inspect` through it reported an image as
+    # missing moments after a direct `docker build` had put it in the local cache. Invoke docker
+    # directly via Process.Start instead (the same mechanism proven reliable for build/pull
+    # elsewhere in this deploy), capturing output through redirected streams so callers can still
+    # read StdOut/StdErr.
     param(
-        [Parameter(Mandatory = $true)][string]$FilePath,
         [Parameter(Mandatory = $true)][string[]]$Arguments,
         [int]$TimeoutSeconds = 60,
         [switch]$AllowFailure
     )
-    $token = [guid]::NewGuid().ToString('N')
-    $stdoutPath = Join-Path $env:TEMP "hub-native-$token.out"
-    $stderrPath = Join-Path $env:TEMP "hub-native-$token.err"
-    try {
-        $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
-        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
-            try { $process.Kill() } catch {}
-            Fail "Command timed out after ${TimeoutSeconds}s: $FilePath $($Arguments -join ' ')"
-        }
-        $process.WaitForExit()
-        $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw -ErrorAction SilentlyContinue } else { '' }
-        $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw -ErrorAction SilentlyContinue } else { '' }
-        if ($process.ExitCode -ne 0 -and -not $AllowFailure) {
-            Fail "Command failed ($($process.ExitCode)): $FilePath $($Arguments -join ' ')`n$stderr"
-        }
-        return [pscustomobject]@{ ExitCode = $process.ExitCode; StdOut = [string]$stdout; StdErr = [string]$stderr }
-    } finally {
-        Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'docker'
+    $psi.Arguments = ($Arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+        try { $proc.Kill() } catch {}
+        Fail "Command timed out after ${TimeoutSeconds}s: docker $($Arguments -join ' ')"
     }
+    $stdout = $proc.StandardOutput.ReadToEnd()
+    $stderr = $proc.StandardError.ReadToEnd()
+    if ($proc.ExitCode -ne 0 -and -not $AllowFailure) {
+        Fail "Command failed ($($proc.ExitCode)): docker $($Arguments -join ' ')`n$stderr"
+    }
+    return [pscustomobject]@{ ExitCode = $proc.ExitCode; StdOut = [string]$stdout; StdErr = [string]$stderr }
 }
 
 Say '[hub] checking isolated runtime'
@@ -106,7 +110,7 @@ Say '[hub] checking Docker Compose plugin'
 # --short isn't supported by every Compose CLI build (seen rejected outright as "unknown flag" on
 # the production machine) and this is purely a log line, not a version gate - AllowFailure so a
 # flag/version quirk here can never abort the whole deploy.
-$composeVersion = Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', 'version') -TimeoutSeconds 30 -AllowFailure
+$composeVersion = Invoke-Docker -Arguments @('compose', 'version') -TimeoutSeconds 30 -AllowFailure
 # -AllowFailure means StdOut can legitimately be $null (Get-Content -Raw returns $null, not '',
 # for a zero-byte file) - calling .Trim() on that directly throws "cannot call a method on a
 # null-valued expression" and aborts the deploy on what is only ever a log line.
@@ -188,32 +192,43 @@ if (-not [int]::TryParse([string]$envMap['HUB_HOST_PORT'], [ref]$publicPort) -or
 
 Say '[hub] checking runtime base images'
 foreach ($image in @('pgvector/pgvector:pg16', 'caddy:2.10-alpine')) {
-    $imageProbe = Invoke-NativeProcess -FilePath 'docker' -Arguments @('image', 'inspect', $image) -TimeoutSeconds 45 -AllowFailure
-    if ($imageProbe.ExitCode -ne 0) {
+    # `docker image inspect` via Invoke-NativeProcess/Start-Process reported an image as missing
+    # moments after deploy-service.ps1 had just built it into the local cache via
+    # `docker build --pull` (direct invocation) - Start-Process-spawned docker children appear not
+    # to resolve the same config/context as directly-invoked ones on this machine. Use a direct
+    # native call here too, matching every other docker invocation that's proven reliable. try/catch
+    # (not *>$null/2>&1) because a missing image's stderr write is promoted to a terminating error
+    # under this script's $ErrorActionPreference='Stop' regardless of stream redirection.
+    $imageExists = $true
+    try {
+        docker image inspect $image 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { $imageExists = $false }
+    } catch { $imageExists = $false }
+    if (-not $imageExists) {
         Say "[hub] pulling runtime image $image"
-        # `docker pull` via Invoke-NativeProcess/Start-Process was observed to fail here with a
-        # Windows credential-helper error ("A specified logon session does not exist") even for
-        # this fully public, anonymous image - while `docker build --pull` elsewhere in this same
-        # deploy (same isolated DOCKER_CONFIG, same SSH session) pulls public base images (python,
-        # node, gradle, temurin) without issue. Invoke it as a direct native command instead,
-        # matching the pattern that's proven reliable on this machine.
         docker pull $image
         if ($LASTEXITCODE -ne 0) { Fail "Failed to pull runtime image: $image" }
     }
 }
 foreach ($image in @('hub-production-ai:latest', 'hub-production-backend:latest')) {
-    $imageProbe = Invoke-NativeProcess -FilePath 'docker' -Arguments @('image', 'inspect', $image) -TimeoutSeconds 45 -AllowFailure
-    if ($imageProbe.ExitCode -ne 0) { Fail "Hub application image is missing: $image" }
+    # Same Start-Process-vs-direct-invocation visibility issue as above: these were built via a
+    # direct `docker build` call in deploy-service.ps1, so check for them the same way.
+    $imageExists = $true
+    try {
+        docker image inspect $image 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) { $imageExists = $false }
+    } catch { $imageExists = $false }
+    if (-not $imageExists) { Fail "Hub application image is missing: $image" }
 }
 
-$inspect = Invoke-NativeProcess -FilePath 'docker' -Arguments @('image', 'inspect', 'hub-production-backend:latest') -TimeoutSeconds 45
+$inspect = Invoke-Docker -Arguments @('image', 'inspect', 'hub-production-backend:latest') -TimeoutSeconds 45
 $inspectData = $inspect.StdOut | ConvertFrom-Json
 $revision = [string]$inspectData[0].Config.Labels.'org.opencontainers.image.revision'
 if ($revision -ne $ExpectedSha) {
     Fail "Hub backend image revision mismatch: expected=$ExpectedSha actual=$revision"
 }
 
-$psResult = Invoke-NativeProcess -FilePath 'docker' -Arguments @('ps', '--format', '{{.Names}}') -TimeoutSeconds 45
+$psResult = Invoke-Docker -Arguments @('ps', '--format', '{{.Names}}') -TimeoutSeconds 45
 $existingDb = @($psResult.StdOut -split "`r?`n" | Where-Object { $_ -eq 'hub-db' })
 if ($existingDb.Count -gt 0) {
     Say '[hub] creating pre-deploy Postgres backup'
@@ -232,10 +247,10 @@ $env:HUB_STORAGE_DATA_DIR = ($StorageDataRoot -replace '\\', '/')
 $env:HUB_CADDYFILE = ($CaddyFile -replace '\\', '/')
 
 Say '[hub] validating production compose'
-Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'hub-production', '-f', $ComposeFile, 'config', '--quiet') -TimeoutSeconds 60 | Out-Null
+Invoke-Docker -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'hub-production', '-f', $ComposeFile, 'config', '--quiet') -TimeoutSeconds 60 | Out-Null
 
 Say '[hub] starting production containers'
-$composeUp = Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'hub-production', '-f', $ComposeFile, 'up', '-d', '--no-build', '--pull', 'never', '--remove-orphans') -TimeoutSeconds 180
+$composeUp = Invoke-Docker -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'hub-production', '-f', $ComposeFile, 'up', '-d', '--no-build', '--pull', 'never', '--remove-orphans') -TimeoutSeconds 180
 if (-not [string]::IsNullOrWhiteSpace($composeUp.StdOut)) { Say $composeUp.StdOut.Trim() }
 if (-not [string]::IsNullOrWhiteSpace($composeUp.StdErr)) { Say $composeUp.StdErr.Trim() }
 
