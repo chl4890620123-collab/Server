@@ -34,6 +34,36 @@ function Test-DockerEngine {
     return [pscustomobject]@{ Ready = ($proc.ExitCode -eq 0); Output = $output.Trim() }
 }
 
+function ConvertTo-ArgumentString {
+    param([string[]]$Arguments)
+    ($Arguments | ForEach-Object {
+        if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
+    }) -join ' '
+}
+
+function Invoke-TimedBuild {
+    # A bare `docker build` call has no timeout of its own - a stalled base-image pull or a
+    # daemon that stops responding mid-build used to hang silently until the outer 50-minute SSH
+    # timeout killed the whole deploy with zero diagnostics. Bound each build explicitly so a
+    # hang fails fast with a clear reason instead. Output streams through normally (no
+    # redirection) since only the wait is bounded, not the process's own I/O.
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [Parameter(Mandatory = $true)][int]$TimeoutMinutes,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'docker'
+    $psi.Arguments = ConvertTo-ArgumentString $Arguments
+    $psi.UseShellExecute = $false
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    if (-not $proc.WaitForExit($TimeoutMinutes * 60000)) {
+        try { $proc.Kill() } catch {}
+        throw "$Label timed out after ${TimeoutMinutes}m - build appears hung (possibly a stalled registry pull)"
+    }
+    if ($proc.ExitCode -ne 0) { throw "$Label failed (exit $($proc.ExitCode))" }
+}
+
 function Wait-DockerEngine {
     param([string]$Name)
     $serviceRestartAttempted = $false
@@ -136,12 +166,21 @@ try {
             if (-not $?) { throw '[restok] deployment failed' }
         }
         'hub' {
+            # Clear images left over from any previous interrupted build so a corrupted/partial
+            # layer cannot silently poison this attempt - forces a genuinely fresh rebuild.
+            foreach ($staleImage in @('hub-production-ai:latest', 'hub-production-backend:latest')) {
+                docker image rm -f $staleImage 2>&1 | Out-Null
+            }
             # backend/Dockerfile expects the repo root as build context (it COPYs frontend/ and
             # backend/ side by side), unlike the other apps' self-contained per-service Dockerfiles.
-            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t hub-production-ai:latest (Join-Path $sourceDir 'ai-service')
-            if ($LASTEXITCODE -ne 0) { throw '[hub] AI build failed' }
-            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -f (Join-Path $sourceDir 'backend\Dockerfile') -t hub-production-backend:latest $sourceDir
-            if ($LASTEXITCODE -ne 0) { throw '[hub] backend build failed' }
+            Invoke-TimedBuild -TimeoutMinutes 20 -Label '[hub] AI build' -Arguments @(
+                'build', '--pull', '--label', "org.opencontainers.image.revision=$sourceSha",
+                '-t', 'hub-production-ai:latest', (Join-Path $sourceDir 'ai-service')
+            )
+            Invoke-TimedBuild -TimeoutMinutes 20 -Label '[hub] backend build' -Arguments @(
+                'build', '--pull', '--label', "org.opencontainers.image.revision=$sourceSha",
+                '-f', (Join-Path $sourceDir 'backend\Dockerfile'), '-t', 'hub-production-backend:latest', $sourceDir
+            )
             & (Join-Path $ServerRoot 'deploy\scripts\deploy-hub.ps1') -ExpectedSha $sourceSha -Force:$Force
             if (-not $?) { throw '[hub] deployment failed' }
         }
