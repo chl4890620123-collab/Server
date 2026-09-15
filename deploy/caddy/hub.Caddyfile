@@ -1,0 +1,17 @@
+# Hub private gateway.
+# Host :HUB_HOST_PORT -> Hub Caddy :80 -> Spring Boot :8080.
+# Static frontend is served by Spring Boot itself, so there is no separate frontend host port.
+# Public HTTPS is terminated by the existing MOVEAI Caddy on host 80/443, once its route to this
+# port is enabled (see deploy/scripts/ensure-public-route.ps1).
+:80 {
+    encode zstd gzip
+
+    reverse_proxy backend:8080 {
+        # Preserve public request information through:
+        # MOVEAI Caddy -> Hub Caddy -> Spring Boot.
+        header_up Host {http.request.host}
+        header_up X-Forwarded-Host {http.request.header.X-Forwarded-Host}
+        header_up X-Forwarded-Proto {http.request.header.X-Forwarded-Proto}
+        header_up X-Forwarded-Port {http.request.header.X-Forwarded-Port}
+    }
+}

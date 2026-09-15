@@ -1,0 +1,3 @@
+Hub production deployment trigger
+First onboarding of the Hub intranet app into the central deployment system.
+Triggered: 2026-09-15T17:40:00+09:00

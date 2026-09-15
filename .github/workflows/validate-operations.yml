@@ -31,11 +31,12 @@ jobs:
         run: |
           set -euo pipefail
           test -f deploy/scripts/deploy-service.ps1
-          grep -q "ValidateSet('maple', 'aitm', 'restok')" deploy/scripts/deploy-service.ps1
+          grep -q "ValidateSet('maple', 'aitm', 'restok', 'hub')" deploy/scripts/deploy-service.ps1
           grep -Fq "C:\\home\\server\\sources" deploy/scripts/deploy-service.ps1
           grep -q 'chl4890620123-collab/maple.git' deploy/scripts/deploy-service.ps1
           grep -q 'chl4890620123-collab/Aitm.git' deploy/scripts/deploy-service.ps1
           grep -q 'chl4890620123-collab/Restok-Rangchain.git' deploy/scripts/deploy-service.ps1
+          grep -q 'chl4890620123-collab/hub.git' deploy/scripts/deploy-service.ps1
 
       - name: Enforce independent service wiring
         shell: bash
@@ -67,7 +68,9 @@ jobs:
             'deploy/scripts/deploy-restok.ps1',
             'deploy/scripts/check-restok-legacy-data.ps1',
             'deploy/scripts/deploy-maple.ps1',
-            'deploy/scripts/run-maple-deploy.ps1'
+            'deploy/scripts/run-maple-deploy.ps1',
+            'deploy/scripts/deploy-hub.ps1',
+            'deploy/scripts/ensure-public-route.ps1'
           )
           foreach ($file in $files) {
             if (-not (Test-Path $file)) { throw "Required operations script is missing: $file" }
@@ -127,10 +130,23 @@ jobs:
           ADMIN_TOKEN: ci-maple-admin-token
         run: docker compose -p maple-validation -f deploy/compose/maple.yml config >/dev/null
 
+      - name: Validate Hub production Compose
+        shell: bash
+        env:
+          DB_NAME: hub
+          DB_USER: hub
+          DB_PASSWORD: ci-hub-password
+          HUB_DB_DATA_DIR: /tmp/hub-db
+          HUB_STORAGE_DATA_DIR: /tmp/hub-storage
+          HUB_CADDYFILE: /tmp/hub.Caddyfile
+          HUB_HOST_PORT: "9070"
+          HUB_JWT_SECRET: ci-hub-jwt-secret-that-is-at-least-32-bytes-long
+        run: docker compose -p hub-validation -f deploy/compose/hub.yml config >/dev/null
+
       - name: Validate Caddy configurations
         shell: bash
         run: |
           set -euo pipefail
-          for service in aitm restok maple; do
+          for service in aitm restok maple hub; do
             docker run --rm -v "$PWD/deploy/caddy/${service}.Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
           done

@@ -8,7 +8,7 @@ on:
         required: true
         default: all
         type: choice
-        options: [all, maple, restok]
+        options: [all, maple, restok, hub]
       force:
         description: Force redeploy
         required: false
@@ -18,6 +18,7 @@ on:
     branches: [main]
     paths:
       - '.ops-trigger/maple.txt'
+      - '.ops-trigger/hub.txt'
 
 permissions:
   contents: read
@@ -27,8 +28,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Push only touches the workflow via .ops-trigger/*.txt; this tells the two push-triggerable
+  # deploy jobs below which one of them the push was actually for, so touching hub's trigger file
+  # does not also redeploy maple (and vice versa). Not needed - and skipped - for workflow_dispatch,
+  # which instead targets a service directly through the `target` input.
+  detect:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      maple: ${{ steps.filter.outputs.maple }}
+      hub: ${{ steps.filter.outputs.hub }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            maple:
+              - '.ops-trigger/maple.txt'
+            hub:
+              - '.ops-trigger/hub.txt'
+
   deploy-maple:
-    if: ${{ github.event_name == 'push' || inputs.target == 'all' || inputs.target == 'maple' }}
+    needs: [detect]
+    if: ${{ always() && ((github.event_name == 'push' && needs.detect.outputs.maple == 'true') || inputs.target == 'all' || inputs.target == 'maple') }}
     uses: ./.github/workflows/_deploy-service.yml
     with:
       service: maple
@@ -41,4 +64,13 @@ jobs:
     with:
       service: restok
       force: ${{ inputs.force }}
+    secrets: inherit
+
+  deploy-hub:
+    needs: [detect]
+    if: ${{ always() && ((github.event_name == 'push' && needs.detect.outputs.hub == 'true') || inputs.target == 'all' || inputs.target == 'hub') }}
+    uses: ./.github/workflows/_deploy-service.yml
+    with:
+      service: hub
+      force: ${{ github.event_name == 'push' || inputs.force }}
     secrets: inherit

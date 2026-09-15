@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('maple', 'aitm', 'restok')]
+    [ValidateSet('maple', 'aitm', 'restok', 'hub')]
     [string]$Service,
     [switch]$Force
 )
@@ -49,6 +49,7 @@ $services = @{
     maple = @{ Repository = 'https://github.com/chl4890620123-collab/maple.git'; SourceDir = Join-Path $SourcesRoot 'maple' }
     aitm = @{ Repository = 'https://github.com/chl4890620123-collab/Aitm.git'; SourceDir = Join-Path $SourcesRoot 'aitm' }
     restok = @{ Repository = 'https://github.com/chl4890620123-collab/Restok-Rangchain.git'; SourceDir = Join-Path $SourcesRoot 'restok' }
+    hub = @{ Repository = 'https://github.com/chl4890620123-collab/hub.git'; SourceDir = Join-Path $SourcesRoot 'hub' }
 }
 
 $spec = $services[$Service]
@@ -120,6 +121,16 @@ try {
             if (-not $?) { throw '[restok] legacy-data preflight failed' }
             & (Join-Path $ServerRoot 'deploy\scripts\deploy-restok.ps1') -Force:$Force -Prebuilt
             if (-not $?) { throw '[restok] deployment failed' }
+        }
+        'hub' {
+            # backend/Dockerfile expects the repo root as build context (it COPYs frontend/ and
+            # backend/ side by side), unlike the other apps' self-contained per-service Dockerfiles.
+            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t hub-production-ai:latest (Join-Path $sourceDir 'ai-service')
+            if ($LASTEXITCODE -ne 0) { throw '[hub] AI build failed' }
+            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -f (Join-Path $sourceDir 'backend\Dockerfile') -t hub-production-backend:latest $sourceDir
+            if ($LASTEXITCODE -ne 0) { throw '[hub] backend build failed' }
+            & (Join-Path $ServerRoot 'deploy\scripts\deploy-hub.ps1') -ExpectedSha $sourceSha -Force:$Force
+            if (-not $?) { throw '[hub] deployment failed' }
         }
     }
 } finally {
