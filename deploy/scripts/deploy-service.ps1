@@ -162,8 +162,26 @@ Say "[$Service] verified remote main SHA: $remoteSha"
 $previousDockerConfig = $env:DOCKER_CONFIG
 $previousDockerApiVersion = $env:DOCKER_API_VERSION
 $dockerConfigRoot = Join-Path $env:TEMP ("server-docker-" + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Force -Path $dockerConfigRoot | Out-Null
+$dockerPluginRoot = Join-Path $dockerConfigRoot 'cli-plugins'
+New-Item -ItemType Directory -Force -Path $dockerPluginRoot | Out-Null
 '{"auths":{}}' | Set-Content -Path (Join-Path $dockerConfigRoot 'config.json') -Encoding ascii
+# `docker compose` (and any other `docker-*` subcommand) is a CLI plugin resolved from
+# $DOCKER_CONFIG/cli-plugins - a fresh, empty isolated config dir has none, so `docker compose ...`
+# falls through unrecognized to docker's root parser ("unknown flag") instead of ever reaching the
+# compose plugin. run-maple-deploy.ps1 already solved this for maple's own separate isolated
+# config; stage the same plugin binaries here so every app using this shared isolation can resolve
+# `docker compose` too - hub is simply the first to actually call it through this path.
+foreach ($pluginSource in @(
+    (Join-Path $env:USERPROFILE '.docker\cli-plugins'),
+    (Join-Path $env:ProgramFiles 'Docker\Docker\resources\cli-plugins'),
+    (Join-Path $env:ProgramFiles 'Docker\cli-plugins')
+)) {
+    if (Test-Path $pluginSource) {
+        Get-ChildItem $pluginSource -Filter 'docker-*.exe' -File -ErrorAction SilentlyContinue | ForEach-Object {
+            Copy-Item $_.FullName (Join-Path $dockerPluginRoot $_.Name) -Force
+        }
+    }
+}
 $env:DOCKER_CONFIG = $dockerConfigRoot
 $env:DOCKER_API_VERSION = '1.44'
 Say "[$Service] using isolated Docker CLI config and compatible API version"
