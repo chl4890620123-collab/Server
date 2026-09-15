@@ -199,16 +199,27 @@ try {
             if (-not $?) { Fail '[restok] deployment failed' }
         }
         'hub' {
-            # Pull these small runtime images (used later by docker compose, not built from
-            # source) as early as possible in the SSH session, before the two multi-minute image
-            # builds below. A `docker pull` issued 10-14 minutes into this same SSH session has
-            # repeatedly failed with a Windows credential-helper error ("A specified logon session
-            # does not exist") even for fully public images, consistent with this SSH session's
-            # logon token expiring after roughly 10 minutes - well past by the time the builds
-            # finish. Pulling now, while the token is still fresh, avoids the issue entirely.
+            # A bare `docker pull` of these small runtime images (used later by docker compose,
+            # not built from source) fails immediately with a Windows credential-helper error ("A
+            # specified logon session does not exist") on this machine - reproduced regardless of
+            # invocation method (Start-Process vs. direct) or timing (seconds vs. minutes into the
+            # SSH session). The one thing that's reliably worked throughout this whole deploy is
+            # `docker build --pull`, which has fetched several other public base images
+            # (python/node/gradle/temurin) without ever hitting this error - those were apparently
+            # already cached locally, so a real registry contact by that path was never actually
+            # exercised before now. Route these two through the same `docker build --pull`
+            # mechanism via a throwaway single-line Dockerfile instead of calling `docker pull`
+            # directly, so they land in the local cache the same reliable way.
             foreach ($runtimeImage in @('pgvector/pgvector:pg16', 'caddy:2.10-alpine')) {
-                docker pull $runtimeImage
-                if ($LASTEXITCODE -ne 0) { Fail "Failed to pull runtime image: $runtimeImage" }
+                $warmDir = Join-Path $env:TEMP ("hub-warm-" + [guid]::NewGuid().ToString('N'))
+                New-Item -ItemType Directory -Force -Path $warmDir | Out-Null
+                try {
+                    "FROM $runtimeImage" | Set-Content -Path (Join-Path $warmDir 'Dockerfile') -Encoding ascii
+                    docker build --pull -t hub-runtime-warm:latest $warmDir
+                    if ($LASTEXITCODE -ne 0) { Fail "Failed to pull runtime image via build: $runtimeImage" }
+                } finally {
+                    Remove-Item -Recurse -Force $warmDir -ErrorAction SilentlyContinue
+                }
             }
             # Clear images left over from any previous interrupted build so a corrupted/partial
             # layer cannot silently poison this attempt - forces a genuinely fresh rebuild.
