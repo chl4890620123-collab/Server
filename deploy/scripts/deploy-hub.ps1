@@ -265,9 +265,24 @@ Say '[hub] validating production compose'
 Invoke-Docker -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'hub-production', '-f', $ComposeFile, 'config', '--quiet') -TimeoutSeconds 60 | Out-Null
 
 Say '[hub] starting production containers'
-$composeUp = Invoke-Docker -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'hub-production', '-f', $ComposeFile, 'up', '-d', '--no-build', '--pull', 'never', '--remove-orphans') -TimeoutSeconds 180
+$composeUp = Invoke-Docker -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'hub-production', '-f', $ComposeFile, 'up', '-d', '--no-build', '--pull', 'never', '--remove-orphans') -TimeoutSeconds 180 -AllowFailure
 if (-not [string]::IsNullOrWhiteSpace($composeUp.StdOut)) { Say $composeUp.StdOut.Trim() }
 if (-not [string]::IsNullOrWhiteSpace($composeUp.StdErr)) { Say $composeUp.StdErr.Trim() }
+if ($composeUp.ExitCode -ne 0) {
+    # `up` failing (eg. a dependency container reporting unhealthy) previously called Fail here
+    # immediately, before the actually-useful in-container error was ever captured - every failure
+    # just showed compose's generic "dependency failed to start" message. Dump each service's
+    # recent logs and health state first so the real cause is visible in the CI log.
+    foreach ($container in @('hub-db', 'hub-ai', 'hub-backend', 'hub-caddy')) {
+        Say "--- docker logs $container (last 100 lines) ---"
+        $logs = Invoke-Docker -Arguments @('logs', '--tail', '100', $container) -TimeoutSeconds 30 -AllowFailure
+        Say $(if ([string]::IsNullOrWhiteSpace($logs.StdOut) -and [string]::IsNullOrWhiteSpace($logs.StdErr)) { '(no logs / container not created)' } else { ($logs.StdOut + $logs.StdErr).Trim() })
+        Say "--- docker inspect $container health/state ---"
+        $inspectHealth = Invoke-Docker -Arguments @('inspect', '--format', '{{.State.Status}} health={{if .State.Health}}{{.State.Health.Status}}{{else}}(none){{end}} exitcode={{.State.ExitCode}}', $container) -TimeoutSeconds 15 -AllowFailure
+        Say $(if ([string]::IsNullOrWhiteSpace($inspectHealth.StdOut)) { '(container not created)' } else { $inspectHealth.StdOut.Trim() })
+    }
+    Fail "Command failed ($($composeUp.ExitCode)): docker compose up`n$($composeUp.StdErr)"
+}
 
 $localBase = "http://127.0.0.1:$publicPort"
 $localReady = $false
