@@ -199,6 +199,17 @@ try {
             if (-not $?) { Fail '[restok] deployment failed' }
         }
         'hub' {
+            # Pull these small runtime images (used later by docker compose, not built from
+            # source) as early as possible in the SSH session, before the two multi-minute image
+            # builds below. A `docker pull` issued 10-14 minutes into this same SSH session has
+            # repeatedly failed with a Windows credential-helper error ("A specified logon session
+            # does not exist") even for fully public images, consistent with this SSH session's
+            # logon token expiring after roughly 10 minutes - well past by the time the builds
+            # finish. Pulling now, while the token is still fresh, avoids the issue entirely.
+            foreach ($runtimeImage in @('pgvector/pgvector:pg16', 'caddy:2.10-alpine')) {
+                docker pull $runtimeImage
+                if ($LASTEXITCODE -ne 0) { Fail "Failed to pull runtime image: $runtimeImage" }
+            }
             # Clear images left over from any previous interrupted build so a corrupted/partial
             # layer cannot silently poison this attempt - forces a genuinely fresh rebuild.
             foreach ($staleImage in @('hub-production-ai:latest', 'hub-production-backend:latest')) {
