@@ -114,11 +114,11 @@ HUB_PUBLIC_DOMAIN=yellow.it.kr
 HUB_PUBLIC_BASE_URL=
 HUB_OUTER_CADDY_AUTO_CONFIGURE=true
 HUB_ALLOW_DOMAIN_TAKEOVER=true
-HUB_AI_MODE=gemini
+HUB_AI_MODE=mock
 GEMINI_API_KEY=
 HUB_EMBED_MODE=e5
 "@ | Set-Content -Path $RuntimeEnv -Encoding ascii
-    Write-Host '[hub] created server-local runtime env - fill in GEMINI_API_KEY (and any connector tokens) at:'
+    Write-Host '[hub] created server-local runtime env - fill in GEMINI_API_KEY and set HUB_AI_MODE=gemini (and any connector tokens) at:'
     Write-Host "[hub] $RuntimeEnv"
 }
 
@@ -141,6 +141,20 @@ if (-not $envMap.ContainsKey('HUB_ADMIN_SETUP_KEY') -or [string]::IsNullOrWhiteS
 }
 if (-not $envMap.ContainsKey('HUB_STT_PII_HASH_KEY') -or [string]::IsNullOrWhiteSpace([string]$envMap['HUB_STT_PII_HASH_KEY'])) {
     Add-EnvSetting $RuntimeEnv $envMap 'HUB_STT_PII_HASH_KEY' (New-SecretValue)
+}
+
+# ai-service crashes on startup (RuntimeError, not a slow failure) when HUB_AI_MODE=gemini has no
+# GEMINI_API_KEY - and backend's `depends_on: ai: condition: service_healthy` means it would then
+# never start at all. Force mock mode until a real key is present so the stack can actually come
+# up; switch this back to gemini once GEMINI_API_KEY is filled in.
+$aiMode = [string]$envMap['HUB_AI_MODE']
+$geminiKeyBlank = -not $envMap.ContainsKey('GEMINI_API_KEY') -or [string]::IsNullOrWhiteSpace([string]$envMap['GEMINI_API_KEY'])
+if ($aiMode -eq 'gemini' -and $geminiKeyBlank) {
+    Write-Warning '[hub] HUB_AI_MODE=gemini but GEMINI_API_KEY is blank - the AI service would crash-loop and backend would never start. Forcing HUB_AI_MODE=mock for this deploy; set GEMINI_API_KEY and change HUB_AI_MODE back to gemini in the runtime .env once ready.'
+    $envMap['HUB_AI_MODE'] = 'mock'
+    $envContent = Get-Content $RuntimeEnv
+    $envContent = $envContent -replace '^\s*HUB_AI_MODE\s*=.*$', 'HUB_AI_MODE=mock'
+    Set-Content -Path $RuntimeEnv -Value $envContent -Encoding ascii
 }
 
 foreach ($key in @('HUB_HOST_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'HUB_JWT_SECRET')) {
