@@ -107,7 +107,11 @@ Say '[hub] checking Docker Compose plugin'
 # the production machine) and this is purely a log line, not a version gate - AllowFailure so a
 # flag/version quirk here can never abort the whole deploy.
 $composeVersion = Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', 'version') -TimeoutSeconds 30 -AllowFailure
-Say "[hub] Docker Compose ready: $($composeVersion.StdOut.Trim())"
+# -AllowFailure means StdOut can legitimately be $null (Get-Content -Raw returns $null, not '',
+# for a zero-byte file) - calling .Trim() on that directly throws "cannot call a method on a
+# null-valued expression" and aborts the deploy on what is only ever a log line.
+$composeVersionText = if ([string]::IsNullOrEmpty($composeVersion.StdOut)) { '(no output)' } else { $composeVersion.StdOut.Trim() }
+Say "[hub] Docker Compose ready: $composeVersionText"
 
 @($RuntimeRoot, $DbDataRoot, $StorageDataRoot, $BackupRoot) | ForEach-Object {
     New-Item -ItemType Directory -Force -Path $_ | Out-Null
