@@ -165,21 +165,22 @@ $dockerConfigRoot = Join-Path $env:TEMP ("server-docker-" + [guid]::NewGuid().To
 $dockerPluginRoot = Join-Path $dockerConfigRoot 'cli-plugins'
 New-Item -ItemType Directory -Force -Path $dockerPluginRoot | Out-Null
 '{"auths":{}}' | Set-Content -Path (Join-Path $dockerConfigRoot 'config.json') -Encoding ascii
-# `docker compose` (and any other `docker-*` subcommand) is a CLI plugin resolved from
-# $DOCKER_CONFIG/cli-plugins - a fresh, empty isolated config dir has none, so `docker compose ...`
-# falls through unrecognized to docker's root parser ("unknown flag") instead of ever reaching the
-# compose plugin. run-maple-deploy.ps1 already solved this for maple's own separate isolated
-# config; stage the same plugin binaries here so every app using this shared isolation can resolve
-# `docker compose` too - hub is simply the first to actually call it through this path.
+# `docker compose` is a CLI plugin resolved from $DOCKER_CONFIG/cli-plugins - a fresh, empty
+# isolated config dir has none, so `docker compose ...` falls through unrecognized to docker's
+# root parser ("unknown flag") instead of ever reaching the compose plugin. Stage ONLY
+# docker-compose.exe (not a broad docker-*.exe glob): staging docker-buildx.exe as well was tried
+# first and made `docker build --pull` silently switch from the classic builder to BuildKit's
+# containerized `docker-container` driver, which does its own separate registry/credential
+# resolution and reintroduced the already-solved Windows credential-helper failure
+# ("A specified logon session does not exist") for a completely different reason.
 foreach ($pluginSource in @(
     (Join-Path $env:USERPROFILE '.docker\cli-plugins'),
     (Join-Path $env:ProgramFiles 'Docker\Docker\resources\cli-plugins'),
     (Join-Path $env:ProgramFiles 'Docker\cli-plugins')
 )) {
-    if (Test-Path $pluginSource) {
-        Get-ChildItem $pluginSource -Filter 'docker-*.exe' -File -ErrorAction SilentlyContinue | ForEach-Object {
-            Copy-Item $_.FullName (Join-Path $dockerPluginRoot $_.Name) -Force
-        }
+    $composePlugin = Join-Path $pluginSource 'docker-compose.exe'
+    if (Test-Path $composePlugin) {
+        Copy-Item $composePlugin (Join-Path $dockerPluginRoot 'docker-compose.exe') -Force
     }
 }
 $env:DOCKER_CONFIG = $dockerConfigRoot
