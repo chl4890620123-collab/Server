@@ -59,9 +59,20 @@ function Invoke-TimedBuild {
     $proc = [System.Diagnostics.Process]::Start($psi)
     if (-not $proc.WaitForExit($TimeoutMinutes * 60000)) {
         try { $proc.Kill() } catch {}
-        throw "$Label timed out after ${TimeoutMinutes}m - build appears hung (possibly a stalled registry pull)"
+        # A plain `throw` here was observed to leave the whole remote script hung for another
+        # ~38 minutes even after `docker build` itself had already failed and exited - PowerShell's
+        # exception/Write-Host output travels through a separate serialized (CLIXML) channel from
+        # a native command's own stdout, and over this non-pty SSH exec that channel can back up
+        # and block the process from ever actually exiting. Write straight to the already-unbuffered
+        # console stream and force-exit the process instead of unwinding through PowerShell's own
+        # error machinery, so the outer SSH timeout is never the thing that has to catch this.
+        [Console]::Out.WriteLine("$Label timed out after ${TimeoutMinutes}m - build appears hung (possibly a stalled registry pull)")
+        [Environment]::Exit(1)
     }
-    if ($proc.ExitCode -ne 0) { throw "$Label failed (exit $($proc.ExitCode))" }
+    if ($proc.ExitCode -ne 0) {
+        [Console]::Out.WriteLine("$Label failed (exit $($proc.ExitCode))")
+        [Environment]::Exit(1)
+    }
 }
 
 function Wait-DockerEngine {
