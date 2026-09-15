@@ -98,7 +98,12 @@ jobs:
           & '.\deploy\scripts\deploy-service.ps1' -Service '$SERVICE'$force_arg
           if (-not \$?) { throw '$SERVICE deployment failed' }
           PWSH
-          wrapper='$script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
+          # Force Console.Out to autoflush before running the script. Over a non-interactive SSH
+          # exec (no pty), PowerShell's stdout can otherwise sit block-buffered until the process
+          # exits, so a hang produces zero visible output for its entire duration instead of
+          # streaming progress as it happens - this made every past hang look identical (silence)
+          # regardless of where it actually got stuck.
+          wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
           encoded_wrapper="$(printf '%s' "$wrapper" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
           remote_command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded_wrapper"
           : > "$RUNNER_TEMP/${SERVICE}-ssh-output.txt"
