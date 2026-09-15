@@ -169,7 +169,12 @@ try {
             # Clear images left over from any previous interrupted build so a corrupted/partial
             # layer cannot silently poison this attempt - forces a genuinely fresh rebuild.
             foreach ($staleImage in @('hub-production-ai:latest', 'hub-production-backend:latest')) {
-                docker image rm -f $staleImage 2>&1 | Out-Null
+                # `2>&1` would promote docker's stderr into a PowerShell error object and, combined
+                # with $ErrorActionPreference='Stop' script-wide, abort the whole deploy the very
+                # first time this image doesn't exist yet (eg. hub's first-ever deploy). `*>$null`
+                # discards the native stream directly instead, without going through PowerShell's
+                # error machinery.
+                docker image rm -f $staleImage *> $null
             }
             # backend/Dockerfile expects the repo root as build context (it COPYs frontend/ and
             # backend/ side by side), unlike the other apps' self-contained per-service Dockerfiles.
