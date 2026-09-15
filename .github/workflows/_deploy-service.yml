@@ -79,24 +79,36 @@ jobs:
           cat > "$remote_script" <<PWSH
           \$ErrorActionPreference = 'Stop'
           Set-StrictMode -Version Latest
+          function Fail {
+              # A plain \`throw\` can leave this whole script hung for tens of minutes instead of
+              # exiting - PowerShell's exception/Write-Host output travels through a separate
+              # serialized (CLIXML) channel from a native command's own stdout, and over this
+              # non-pty SSH exec that channel can back up and block the process from ever actually
+              # exiting. Write straight to the console stream and force-exit instead.
+              param([Parameter(Mandatory = \$true)][string]\$Message)
+              [Console]::Out.WriteLine(\$Message)
+              [Environment]::Exit(1)
+          }
           \$serverPath = 'C:\home\server\app'
           New-Item -ItemType Directory -Force -Path (Split-Path \$serverPath -Parent) | Out-Null
+          \$staleLock = Join-Path \$serverPath '.git\index.lock'
+          if (Test-Path \$staleLock) { Remove-Item -Force \$staleLock -ErrorAction SilentlyContinue }
           if (-not (Test-Path (Join-Path \$serverPath '.git'))) {
               if (Test-Path \$serverPath) { Remove-Item -Recurse -Force \$serverPath }
               git clone 'https://github.com/chl4890620123-collab/Server.git' \$serverPath
-              if (\$LASTEXITCODE -ne 0) { throw 'Server clone failed' }
+              if (\$LASTEXITCODE -ne 0) { Fail 'Server clone failed' }
           }
           git -C \$serverPath fetch --force --prune origin '+refs/heads/main:refs/remotes/origin/main'
-          if (\$LASTEXITCODE -ne 0) { throw 'Server fetch failed' }
+          if (\$LASTEXITCODE -ne 0) { Fail 'Server fetch failed' }
           \$remoteSha = (git -C \$serverPath rev-parse refs/remotes/origin/main | Out-String).Trim()
           git -C \$serverPath checkout -B main \$remoteSha
           git -C \$serverPath reset --hard \$remoteSha
           git -C \$serverPath clean -fd
           \$localSha = (git -C \$serverPath rev-parse HEAD | Out-String).Trim()
-          if (\$localSha -ne \$remoteSha) { throw "Server checkout mismatch: local=\$localSha remote=\$remoteSha" }
+          if (\$localSha -ne \$remoteSha) { Fail "Server checkout mismatch: local=\$localSha remote=\$remoteSha" }
           Set-Location \$serverPath
           & '.\deploy\scripts\deploy-service.ps1' -Service '$SERVICE'$force_arg
-          if (-not \$?) { throw '$SERVICE deployment failed' }
+          if (-not \$?) { Fail '$SERVICE deployment failed' }
           PWSH
           # Force Console.Out to autoflush before running the script. Over a non-interactive SSH
           # exec (no pty), PowerShell's stdout can otherwise sit block-buffered until the process

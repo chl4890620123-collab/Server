@@ -7,8 +7,19 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Fail {
+    # A plain `throw` can leave this whole script hung for tens of minutes instead of exiting -
+    # PowerShell's exception/Write-Host output travels through a separate serialized (CLIXML)
+    # channel from a native command's own stdout, and over a non-pty SSH exec that channel can
+    # back up and block the process from ever actually exiting. Write straight to the console
+    # stream and force-exit instead, so a real failure here ends the deploy in seconds.
+    param([Parameter(Mandatory = $true)][string]$Message)
+    [Console]::Out.WriteLine($Message)
+    [Environment]::Exit(1)
+}
+
 if ($ExpectedSha -notmatch '^[0-9a-f]{40}$') {
-    throw 'ExpectedSha must be a 40-character Git SHA.'
+    Fail 'ExpectedSha must be a 40-character Git SHA.'
 }
 
 $ServerRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -62,13 +73,13 @@ function Invoke-NativeProcess {
         $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             try { $process.Kill() } catch {}
-            throw "Command timed out after ${TimeoutSeconds}s: $FilePath $($Arguments -join ' ')"
+            Fail "Command timed out after ${TimeoutSeconds}s: $FilePath $($Arguments -join ' ')"
         }
         $process.WaitForExit()
         $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw -ErrorAction SilentlyContinue } else { '' }
         $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw -ErrorAction SilentlyContinue } else { '' }
         if ($process.ExitCode -ne 0 -and -not $AllowFailure) {
-            throw "Command failed ($($process.ExitCode)): $FilePath $($Arguments -join ' ')`n$stderr"
+            Fail "Command failed ($($process.ExitCode)): $FilePath $($Arguments -join ' ')`n$stderr"
         }
         return [pscustomobject]@{ ExitCode = $process.ExitCode; StdOut = [string]$stdout; StdErr = [string]$stderr }
     } finally {
@@ -77,9 +88,9 @@ function Invoke-NativeProcess {
 }
 
 Write-Host '[hub] checking isolated runtime'
-if (-not (Test-Path 'D:\')) { throw 'D drive is required for Hub runtime data.' }
-if (-not (Test-Path $ComposeFile)) { throw "Hub compose file is missing: $ComposeFile" }
-if (-not (Test-Path $CaddyFile)) { throw "Hub Caddyfile is missing: $CaddyFile" }
+if (-not (Test-Path 'D:\')) { Fail 'D drive is required for Hub runtime data.' }
+if (-not (Test-Path $ComposeFile)) { Fail "Hub compose file is missing: $ComposeFile" }
+if (-not (Test-Path $CaddyFile)) { Fail "Hub Caddyfile is missing: $CaddyFile" }
 Write-Host '[hub] checking Docker Compose plugin'
 $composeVersion = Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', 'version', '--short') -TimeoutSeconds 30
 Write-Host "[hub] Docker Compose ready: $($composeVersion.StdOut.Trim())"
@@ -119,7 +130,7 @@ Add-EnvSetting $RuntimeEnv $envMap 'DB_USER' 'hub'
 
 $missingDbPassword = -not $envMap.ContainsKey('DB_PASSWORD') -or [string]::IsNullOrWhiteSpace([string]$envMap['DB_PASSWORD'])
 if ($missingDbPassword -and $dbHasExistingData) {
-    throw 'Postgres data exists but DB_PASSWORD is missing. Existing data was left untouched.'
+    Fail 'Postgres data exists but DB_PASSWORD is missing. Existing data was left untouched.'
 }
 if ($missingDbPassword) { Add-EnvSetting $RuntimeEnv $envMap 'DB_PASSWORD' (New-SecretValue) }
 if (-not $envMap.ContainsKey('HUB_JWT_SECRET') -or [string]::IsNullOrWhiteSpace([string]$envMap['HUB_JWT_SECRET'])) {
@@ -134,13 +145,13 @@ if (-not $envMap.ContainsKey('HUB_STT_PII_HASH_KEY') -or [string]::IsNullOrWhite
 
 foreach ($key in @('HUB_HOST_PORT', 'DB_NAME', 'DB_USER', 'DB_PASSWORD', 'HUB_JWT_SECRET')) {
     if (-not $envMap.ContainsKey($key) -or [string]::IsNullOrWhiteSpace([string]$envMap[$key])) {
-        throw "Required Hub setting '$key' is missing."
+        Fail "Required Hub setting '$key' is missing."
     }
 }
 
 $publicPort = 0
 if (-not [int]::TryParse([string]$envMap['HUB_HOST_PORT'], [ref]$publicPort) -or $publicPort -lt 1024 -or $publicPort -gt 65535) {
-    throw 'HUB_HOST_PORT must be between 1024 and 65535.'
+    Fail 'HUB_HOST_PORT must be between 1024 and 65535.'
 }
 
 Write-Host '[hub] checking runtime base images'
@@ -153,14 +164,14 @@ foreach ($image in @('pgvector/pgvector:pg16', 'caddy:2.10-alpine')) {
 }
 foreach ($image in @('hub-production-ai:latest', 'hub-production-backend:latest')) {
     $imageProbe = Invoke-NativeProcess -FilePath 'docker' -Arguments @('image', 'inspect', $image) -TimeoutSeconds 45 -AllowFailure
-    if ($imageProbe.ExitCode -ne 0) { throw "Hub application image is missing: $image" }
+    if ($imageProbe.ExitCode -ne 0) { Fail "Hub application image is missing: $image" }
 }
 
 $inspect = Invoke-NativeProcess -FilePath 'docker' -Arguments @('image', 'inspect', 'hub-production-backend:latest') -TimeoutSeconds 45
 $inspectData = $inspect.StdOut | ConvertFrom-Json
 $revision = [string]$inspectData[0].Config.Labels.'org.opencontainers.image.revision'
 if ($revision -ne $ExpectedSha) {
-    throw "Hub backend image revision mismatch: expected=$ExpectedSha actual=$revision"
+    Fail "Hub backend image revision mismatch: expected=$ExpectedSha actual=$revision"
 }
 
 $psResult = Invoke-NativeProcess -FilePath 'docker' -Arguments @('ps', '--format', '{{.Names}}') -TimeoutSeconds 45
@@ -169,9 +180,9 @@ if ($existingDb.Count -gt 0) {
     Write-Host '[hub] creating pre-deploy Postgres backup'
     $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     docker exec hub-db sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > /tmp/hub_backup.sql'
-    if ($LASTEXITCODE -ne 0) { throw 'Pre-deploy Postgres backup failed.' }
+    if ($LASTEXITCODE -ne 0) { Fail 'Pre-deploy Postgres backup failed.' }
     docker cp 'hub-db:/tmp/hub_backup.sql' (Join-Path $BackupRoot "hub_$stamp.sql")
-    if ($LASTEXITCODE -ne 0) { throw 'Failed to copy Postgres backup.' }
+    if ($LASTEXITCODE -ne 0) { Fail 'Failed to copy Postgres backup.' }
     docker exec hub-db rm -f /tmp/hub_backup.sql | Out-Null
 }
 Get-ChildItem $BackupRoot -Filter 'hub_*.sql' -File -ErrorAction SilentlyContinue |
@@ -199,7 +210,7 @@ for ($attempt = 1; $attempt -le 48; $attempt++) {
     } catch {}
     Start-Sleep -Seconds 5
 }
-if (-not $localReady) { throw 'Hub local functional check failed.' }
+if (-not $localReady) { Fail 'Hub local functional check failed.' }
 
 $publicDomain = [string]$envMap['HUB_PUBLIC_DOMAIN']
 if ([string]::IsNullOrWhiteSpace($publicDomain)) { $publicDomain = 'yellow.it.kr' }
@@ -210,7 +221,7 @@ $moveAiRoot = if ($envMap.ContainsKey('MOVEAI_ROOT') -and -not [string]::IsNullO
 if ($autoConfigureOuterCaddy) {
     Write-Host "[hub] registering public route on the shared MOVEAI Caddy: $publicDomain -> :$publicPort"
     & $PublicRoutePath -MoveAiRoot $moveAiRoot -Domain $publicDomain -HostPort $publicPort -AppName 'hub' -AllowTakeover:$allowDomainTakeover
-    if (-not $?) { throw 'Public route registration failed.' }
+    if (-not $?) { Fail 'Public route registration failed.' }
 } else {
     Write-Host '[hub] HUB_OUTER_CADDY_AUTO_CONFIGURE=false; existing MOVEAI Caddyfile was not modified.'
 }

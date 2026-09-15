@@ -12,6 +12,19 @@ $ServerRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $SourcesRoot = 'C:\home\server\sources'
 New-Item -ItemType Directory -Force -Path $SourcesRoot | Out-Null
 
+function Fail {
+    # A plain `throw` was observed to leave the whole remote script hung for tens of minutes even
+    # after the real failure had already happened - PowerShell's exception/Write-Host output
+    # travels through a separate serialized (CLIXML) channel from a native command's own stdout,
+    # and over this non-pty SSH exec that channel can back up and block the process from ever
+    # actually exiting. Every failure path in this script goes through here instead: write straight
+    # to the already-unbuffered console stream and force-exit, so a real error ends the deploy in
+    # seconds rather than only surfacing once the outer 50-minute SSH timeout gives up on it.
+    param([Parameter(Mandatory = $true)][string]$Message)
+    [Console]::Out.WriteLine($Message)
+    [Environment]::Exit(1)
+}
+
 function Test-DockerEngine {
     # `docker version` has no built-in timeout. If the engine backend is wedged (eg. left over
     # from a previous deploy attempt whose SSH client was killed without the remote process
@@ -59,20 +72,9 @@ function Invoke-TimedBuild {
     $proc = [System.Diagnostics.Process]::Start($psi)
     if (-not $proc.WaitForExit($TimeoutMinutes * 60000)) {
         try { $proc.Kill() } catch {}
-        # A plain `throw` here was observed to leave the whole remote script hung for another
-        # ~38 minutes even after `docker build` itself had already failed and exited - PowerShell's
-        # exception/Write-Host output travels through a separate serialized (CLIXML) channel from
-        # a native command's own stdout, and over this non-pty SSH exec that channel can back up
-        # and block the process from ever actually exiting. Write straight to the already-unbuffered
-        # console stream and force-exit the process instead of unwinding through PowerShell's own
-        # error machinery, so the outer SSH timeout is never the thing that has to catch this.
-        [Console]::Out.WriteLine("$Label timed out after ${TimeoutMinutes}m - build appears hung (possibly a stalled registry pull)")
-        [Environment]::Exit(1)
+        Fail "$Label timed out after ${TimeoutMinutes}m - build appears hung (possibly a stalled registry pull)"
     }
-    if ($proc.ExitCode -ne 0) {
-        [Console]::Out.WriteLine("$Label failed (exit $($proc.ExitCode))")
-        [Environment]::Exit(1)
-    }
+    if ($proc.ExitCode -ne 0) { Fail "$Label failed (exit $($proc.ExitCode))" }
 }
 
 function Wait-DockerEngine {
@@ -94,7 +96,7 @@ function Wait-DockerEngine {
             $desktopExe = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
             if (Test-Path $desktopExe) { try { Start-Process -FilePath $desktopExe -WindowStyle Hidden -ErrorAction Stop | Out-Null } catch { Write-Warning "[$Name] Docker Desktop startup request failed: $($_.Exception.Message)" } }
         }
-        if ($attempt -eq 18) { throw "Docker Linux Engine did not become ready. Last response: $($probe.Output)" }
+        if ($attempt -eq 18) { Fail "Docker Linux Engine did not become ready. Last response: $($probe.Output)" }
         Start-Sleep -Seconds 5
     }
 }
@@ -110,30 +112,39 @@ $spec = $services[$Service]
 $sourceDir = [string]$spec.SourceDir
 $repository = [string]$spec.Repository
 Write-Host "[$Service] isolated source: $sourceDir"
+$staleLock = Join-Path $sourceDir '.git\index.lock'
+if (Test-Path $staleLock) {
+    # Left behind by a previous git operation whose SSH client was killed mid-command (eg. by the
+    # outer 50-minute timeout) without the remote process actually terminating. git refuses to run
+    # while this exists; removing it is git's own documented recovery for a stale lock.
+    Write-Host "[$Service] removing stale git lock from an interrupted previous attempt: $staleLock"
+    Remove-Item -Force $staleLock -ErrorAction SilentlyContinue
+}
+
 if (-not (Test-Path (Join-Path $sourceDir '.git'))) {
     if (Test-Path $sourceDir) { Remove-Item -Recurse -Force $sourceDir }
     git clone $repository $sourceDir
-    if ($LASTEXITCODE -ne 0) { throw "[$Service] clone failed" }
+    if ($LASTEXITCODE -ne 0) { Fail "[$Service] clone failed" }
 }
 
 git -C $sourceDir remote set-url origin $repository
-if ($LASTEXITCODE -ne 0) { throw "[$Service] remote reset failed" }
+if ($LASTEXITCODE -ne 0) { Fail "[$Service] remote reset failed" }
 git -C $sourceDir reset --hard HEAD
-if ($LASTEXITCODE -ne 0) { throw "[$Service] reset failed" }
+if ($LASTEXITCODE -ne 0) { Fail "[$Service] reset failed" }
 git -C $sourceDir clean -fd
-if ($LASTEXITCODE -ne 0) { throw "[$Service] clean failed" }
+if ($LASTEXITCODE -ne 0) { Fail "[$Service] clean failed" }
 git -C $sourceDir fetch --force --prune origin '+refs/heads/main:refs/remotes/origin/main'
-if ($LASTEXITCODE -ne 0) { throw "[$Service] fetch failed" }
+if ($LASTEXITCODE -ne 0) { Fail "[$Service] fetch failed" }
 $remoteSha = (git -C $sourceDir rev-parse refs/remotes/origin/main | Out-String).Trim()
-if ($remoteSha -notmatch '^[0-9a-f]{40}$') { throw "[$Service] invalid remote main SHA" }
+if ($remoteSha -notmatch '^[0-9a-f]{40}$') { Fail "[$Service] invalid remote main SHA" }
 git -C $sourceDir checkout -B main $remoteSha
-if ($LASTEXITCODE -ne 0) { throw "[$Service] checkout failed" }
+if ($LASTEXITCODE -ne 0) { Fail "[$Service] checkout failed" }
 git -C $sourceDir reset --hard $remoteSha
-if ($LASTEXITCODE -ne 0) { throw "[$Service] main reset failed" }
+if ($LASTEXITCODE -ne 0) { Fail "[$Service] main reset failed" }
 git -C $sourceDir clean -fd
-if ($LASTEXITCODE -ne 0) { throw "[$Service] final clean failed" }
+if ($LASTEXITCODE -ne 0) { Fail "[$Service] final clean failed" }
 $sourceSha = (git -C $sourceDir rev-parse HEAD | Out-String).Trim()
-if ($sourceSha -ne $remoteSha) { throw "[$Service] checkout mismatch: local=$sourceSha remote=$remoteSha" }
+if ($sourceSha -ne $remoteSha) { Fail "[$Service] checkout mismatch: local=$sourceSha remote=$remoteSha" }
 Write-Host "[$Service] source SHA: $sourceSha"
 Write-Host "[$Service] verified remote main SHA: $remoteSha"
 
@@ -150,31 +161,31 @@ try {
     switch ($Service) {
         'maple' {
             docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t maple-production-app:latest $sourceDir
-            if ($LASTEXITCODE -ne 0) { throw '[maple] Docker build failed' }
+            if ($LASTEXITCODE -ne 0) { Fail '[maple] Docker build failed' }
             & (Join-Path $ServerRoot 'deploy\scripts\deploy-maple.ps1') -ExpectedSha $sourceSha
-            if (-not $?) { throw '[maple] deployment failed' }
+            if (-not $?) { Fail '[maple] deployment failed' }
         }
         'aitm' {
             docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-ai:latest (Join-Path $sourceDir 'demo\ai')
-            if ($LASTEXITCODE -ne 0) { throw '[aitm] AI build failed' }
+            if ($LASTEXITCODE -ne 0) { Fail '[aitm] AI build failed' }
             docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-backend:latest (Join-Path $sourceDir 'demo')
-            if ($LASTEXITCODE -ne 0) { throw '[aitm] backend build failed' }
+            if ($LASTEXITCODE -ne 0) { Fail '[aitm] backend build failed' }
             docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-frontend:latest (Join-Path $sourceDir 'front')
-            if ($LASTEXITCODE -ne 0) { throw '[aitm] frontend build failed' }
+            if ($LASTEXITCODE -ne 0) { Fail '[aitm] frontend build failed' }
             & (Join-Path $ServerRoot 'deploy\scripts\deploy-aitm.ps1') -ExpectedSha $sourceSha -Force:$Force
-            if (-not $?) { throw '[aitm] deployment failed' }
+            if (-not $?) { Fail '[aitm] deployment failed' }
         }
         'restok' {
             docker build --pull -t restok-production-ai:latest (Join-Path $sourceDir 'ai_server')
-            if ($LASTEXITCODE -ne 0) { throw '[restok] AI build failed' }
+            if ($LASTEXITCODE -ne 0) { Fail '[restok] AI build failed' }
             docker build --pull -t restok-production-backend:latest (Join-Path $sourceDir 'backend')
-            if ($LASTEXITCODE -ne 0) { throw '[restok] backend build failed' }
+            if ($LASTEXITCODE -ne 0) { Fail '[restok] backend build failed' }
             docker build --pull --build-arg REACT_APP_API_URL= -t restok-production-frontend:latest (Join-Path $sourceDir 'frontend')
-            if ($LASTEXITCODE -ne 0) { throw '[restok] frontend build failed' }
+            if ($LASTEXITCODE -ne 0) { Fail '[restok] frontend build failed' }
             & (Join-Path $ServerRoot 'deploy\scripts\check-restok-legacy-data.ps1')
-            if (-not $?) { throw '[restok] legacy-data preflight failed' }
+            if (-not $?) { Fail '[restok] legacy-data preflight failed' }
             & (Join-Path $ServerRoot 'deploy\scripts\deploy-restok.ps1') -Force:$Force -Prebuilt
-            if (-not $?) { throw '[restok] deployment failed' }
+            if (-not $?) { Fail '[restok] deployment failed' }
         }
         'hub' {
             # Clear images left over from any previous interrupted build so a corrupted/partial
@@ -199,7 +210,7 @@ try {
                 '-f', (Join-Path $sourceDir 'backend\Dockerfile'), '-t', 'hub-production-backend:latest', $sourceDir
             )
             & (Join-Path $ServerRoot 'deploy\scripts\deploy-hub.ps1') -ExpectedSha $sourceSha -Force:$Force
-            if (-not $?) { throw '[hub] deployment failed' }
+            if (-not $?) { Fail '[hub] deployment failed' }
         }
     }
 } finally {
