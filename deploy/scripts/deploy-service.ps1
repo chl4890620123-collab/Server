@@ -13,12 +13,25 @@ $SourcesRoot = 'C:\home\server\sources'
 New-Item -ItemType Directory -Force -Path $SourcesRoot | Out-Null
 
 function Test-DockerEngine {
-    $previousPreference = $ErrorActionPreference
-    $ErrorActionPreference = 'SilentlyContinue'
-    try {
-        $output = docker version 2>&1 | Out-String
-        return [pscustomobject]@{ Ready = ($LASTEXITCODE -eq 0); Output = $output.Trim() }
-    } finally { $ErrorActionPreference = $previousPreference }
+    # `docker version` has no built-in timeout. If the engine backend is wedged (eg. left over
+    # from a previous deploy attempt whose SSH client was killed without the remote process
+    # actually terminating), this call can hang indefinitely instead of erroring - which used to
+    # silently eat the entire 50-minute SSH budget with zero output. Bound it explicitly so a
+    # hung engine is detected in seconds and the existing restart-service/restart-desktop
+    # recovery below actually gets a chance to run.
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'docker'
+    $psi.Arguments = 'version'
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    if (-not $proc.WaitForExit(15000)) {
+        try { $proc.Kill() } catch {}
+        return [pscustomobject]@{ Ready = $false; Output = 'docker version did not respond within 15s - engine appears hung' }
+    }
+    $output = $proc.StandardOutput.ReadToEnd() + $proc.StandardError.ReadToEnd()
+    return [pscustomobject]@{ Ready = ($proc.ExitCode -eq 0); Output = $output.Trim() }
 }
 
 function Wait-DockerEngine {
