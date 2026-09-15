@@ -18,6 +18,17 @@ function Fail {
     [Environment]::Exit(1)
 }
 
+function Say {
+    # Write-Host/Write-Warning were found to suffer the exact same CLIXML-buffering problem as a
+    # bare `throw` (see Fail, above) - not just on failure, but for ordinary progress output too.
+    # A run that went silent for ~39 minutes right after this script's first line turned out to be
+    # indistinguishable from real progress, because every subsequent Write-Host call was simply
+    # never flushed until the process was killed. Use this everywhere instead so progress is
+    # actually visible in real time, the same way native command output already is.
+    param([Parameter(Mandatory = $true)][string]$Message)
+    [Console]::Out.WriteLine($Message)
+}
+
 if ($ExpectedSha -notmatch '^[0-9a-f]{40}$') {
     Fail 'ExpectedSha must be a 40-character Git SHA.'
 }
@@ -55,7 +66,7 @@ function Add-EnvSetting([string]$Path, [hashtable]$Map, [string]$Key, [string]$V
     if (-not $Map.ContainsKey($Key) -or [string]::IsNullOrWhiteSpace([string]$Map[$Key])) {
         Add-Content -Path $Path -Value "$Key=$Value" -Encoding ascii
         $Map[$Key] = $Value
-        Write-Host "[hub] added runtime setting: $Key"
+        Say "[hub] added runtime setting: $Key"
     }
 }
 
@@ -87,13 +98,13 @@ function Invoke-NativeProcess {
     }
 }
 
-Write-Host '[hub] checking isolated runtime'
+Say '[hub] checking isolated runtime'
 if (-not (Test-Path 'D:\')) { Fail 'D drive is required for Hub runtime data.' }
 if (-not (Test-Path $ComposeFile)) { Fail "Hub compose file is missing: $ComposeFile" }
 if (-not (Test-Path $CaddyFile)) { Fail "Hub Caddyfile is missing: $CaddyFile" }
-Write-Host '[hub] checking Docker Compose plugin'
+Say '[hub] checking Docker Compose plugin'
 $composeVersion = Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', 'version', '--short') -TimeoutSeconds 30
-Write-Host "[hub] Docker Compose ready: $($composeVersion.StdOut.Trim())"
+Say "[hub] Docker Compose ready: $($composeVersion.StdOut.Trim())"
 
 @($RuntimeRoot, $DbDataRoot, $StorageDataRoot, $BackupRoot) | ForEach-Object {
     New-Item -ItemType Directory -Force -Path $_ | Out-Null
@@ -118,8 +129,8 @@ HUB_AI_MODE=mock
 GEMINI_API_KEY=
 HUB_EMBED_MODE=e5
 "@ | Set-Content -Path $RuntimeEnv -Encoding ascii
-    Write-Host '[hub] created server-local runtime env - fill in GEMINI_API_KEY and set HUB_AI_MODE=gemini (and any connector tokens) at:'
-    Write-Host "[hub] $RuntimeEnv"
+    Say '[hub] created server-local runtime env - fill in GEMINI_API_KEY and set HUB_AI_MODE=gemini (and any connector tokens) at:'
+    Say "[hub] $RuntimeEnv"
 }
 
 $envMap = Read-EnvFile $RuntimeEnv
@@ -150,7 +161,7 @@ if (-not $envMap.ContainsKey('HUB_STT_PII_HASH_KEY') -or [string]::IsNullOrWhite
 $aiMode = [string]$envMap['HUB_AI_MODE']
 $geminiKeyBlank = -not $envMap.ContainsKey('GEMINI_API_KEY') -or [string]::IsNullOrWhiteSpace([string]$envMap['GEMINI_API_KEY'])
 if ($aiMode -eq 'gemini' -and $geminiKeyBlank) {
-    Write-Warning '[hub] HUB_AI_MODE=gemini but GEMINI_API_KEY is blank - the AI service would crash-loop and backend would never start. Forcing HUB_AI_MODE=mock for this deploy; set GEMINI_API_KEY and change HUB_AI_MODE back to gemini in the runtime .env once ready.'
+    Say '[hub] HUB_AI_MODE=gemini but GEMINI_API_KEY is blank - the AI service would crash-loop and backend would never start. Forcing HUB_AI_MODE=mock for this deploy; set GEMINI_API_KEY and change HUB_AI_MODE back to gemini in the runtime .env once ready.'
     $envMap['HUB_AI_MODE'] = 'mock'
     $envContent = Get-Content $RuntimeEnv
     $envContent = $envContent -replace '^\s*HUB_AI_MODE\s*=.*$', 'HUB_AI_MODE=mock'
@@ -168,11 +179,11 @@ if (-not [int]::TryParse([string]$envMap['HUB_HOST_PORT'], [ref]$publicPort) -or
     Fail 'HUB_HOST_PORT must be between 1024 and 65535.'
 }
 
-Write-Host '[hub] checking runtime base images'
+Say '[hub] checking runtime base images'
 foreach ($image in @('pgvector/pgvector:pg16', 'caddy:2.10-alpine')) {
     $imageProbe = Invoke-NativeProcess -FilePath 'docker' -Arguments @('image', 'inspect', $image) -TimeoutSeconds 45 -AllowFailure
     if ($imageProbe.ExitCode -ne 0) {
-        Write-Host "[hub] pulling runtime image $image"
+        Say "[hub] pulling runtime image $image"
         Invoke-NativeProcess -FilePath 'docker' -Arguments @('pull', $image) -TimeoutSeconds 180 | Out-Null
     }
 }
@@ -191,7 +202,7 @@ if ($revision -ne $ExpectedSha) {
 $psResult = Invoke-NativeProcess -FilePath 'docker' -Arguments @('ps', '--format', '{{.Names}}') -TimeoutSeconds 45
 $existingDb = @($psResult.StdOut -split "`r?`n" | Where-Object { $_ -eq 'hub-db' })
 if ($existingDb.Count -gt 0) {
-    Write-Host '[hub] creating pre-deploy Postgres backup'
+    Say '[hub] creating pre-deploy Postgres backup'
     $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
     docker exec hub-db sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump -U "$POSTGRES_USER" "$POSTGRES_DB" > /tmp/hub_backup.sql'
     if ($LASTEXITCODE -ne 0) { Fail 'Pre-deploy Postgres backup failed.' }
@@ -206,13 +217,13 @@ $env:HUB_DB_DATA_DIR = ($DbDataRoot -replace '\\', '/')
 $env:HUB_STORAGE_DATA_DIR = ($StorageDataRoot -replace '\\', '/')
 $env:HUB_CADDYFILE = ($CaddyFile -replace '\\', '/')
 
-Write-Host '[hub] validating production compose'
+Say '[hub] validating production compose'
 Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'hub-production', '-f', $ComposeFile, 'config', '--quiet') -TimeoutSeconds 60 | Out-Null
 
-Write-Host '[hub] starting production containers'
+Say '[hub] starting production containers'
 $composeUp = Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'hub-production', '-f', $ComposeFile, 'up', '-d', '--no-build', '--pull', 'never', '--remove-orphans') -TimeoutSeconds 180
-if (-not [string]::IsNullOrWhiteSpace($composeUp.StdOut)) { Write-Host $composeUp.StdOut.Trim() }
-if (-not [string]::IsNullOrWhiteSpace($composeUp.StdErr)) { Write-Host $composeUp.StdErr.Trim() }
+if (-not [string]::IsNullOrWhiteSpace($composeUp.StdOut)) { Say $composeUp.StdOut.Trim() }
+if (-not [string]::IsNullOrWhiteSpace($composeUp.StdErr)) { Say $composeUp.StdErr.Trim() }
 
 $localBase = "http://127.0.0.1:$publicPort"
 $localReady = $false
@@ -233,19 +244,19 @@ $allowDomainTakeover = ([string]$envMap['HUB_ALLOW_DOMAIN_TAKEOVER']).ToLowerInv
 $moveAiRoot = if ($envMap.ContainsKey('MOVEAI_ROOT') -and -not [string]::IsNullOrWhiteSpace([string]$envMap['MOVEAI_ROOT'])) { [string]$envMap['MOVEAI_ROOT'] } else { 'C:/MOVEAI' }
 
 if ($autoConfigureOuterCaddy) {
-    Write-Host "[hub] registering public route on the shared MOVEAI Caddy: $publicDomain -> :$publicPort"
+    Say "[hub] registering public route on the shared MOVEAI Caddy: $publicDomain -> :$publicPort"
     & $PublicRoutePath -MoveAiRoot $moveAiRoot -Domain $publicDomain -HostPort $publicPort -AppName 'hub' -AllowTakeover:$allowDomainTakeover
     if (-not $?) { Fail 'Public route registration failed.' }
 } else {
-    Write-Host '[hub] HUB_OUTER_CADDY_AUTO_CONFIGURE=false; existing MOVEAI Caddyfile was not modified.'
+    Say '[hub] HUB_OUTER_CADDY_AUTO_CONFIGURE=false; existing MOVEAI Caddyfile was not modified.'
 }
 
 $ExpectedSha | Set-Content -Path $MarkerFile -Encoding ascii
-Write-Host '[hub] deployment complete'
-Write-Host "[hub] local URL: $localBase"
+Say '[hub] deployment complete'
+Say "[hub] local URL: $localBase"
 if ($autoConfigureOuterCaddy) {
-    Write-Host "[hub] forwarded URL: https://$publicDomain"
+    Say "[hub] forwarded URL: https://$publicDomain"
 } else {
-    Write-Host '[hub] HUB_OUTER_CADDY_AUTO_CONFIGURE=false; no public URL yet - only the local URL above is reachable.'
+    Say '[hub] HUB_OUTER_CADDY_AUTO_CONFIGURE=false; no public URL yet - only the local URL above is reachable.'
 }
-Write-Host "[hub] source SHA: $ExpectedSha"
+Say "[hub] source SHA: $ExpectedSha"

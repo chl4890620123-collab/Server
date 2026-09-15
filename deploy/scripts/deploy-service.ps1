@@ -25,6 +25,17 @@ function Fail {
     [Environment]::Exit(1)
 }
 
+function Say {
+    # Write-Host/Write-Warning were found to suffer the exact same CLIXML-buffering problem as a
+    # bare `throw` (see Fail, above) - not just on failure, but for ordinary progress output too.
+    # A run that went silent for ~39 minutes turned out to have made real progress the whole time;
+    # every Write-Host line in that window was simply never flushed until the process was killed,
+    # making a hang indistinguishable from normal progress in the log. Use this everywhere instead
+    # so progress is actually visible in real time, the same way native command output already is.
+    param([Parameter(Mandatory = $true)][string]$Message)
+    [Console]::Out.WriteLine($Message)
+}
+
 function Test-DockerEngine {
     # `docker version` has no built-in timeout. If the engine backend is wedged (eg. left over
     # from a previous deploy attempt whose SSH client was killed without the remote process
@@ -83,18 +94,18 @@ function Wait-DockerEngine {
     $desktopStartAttempted = $false
     for ($attempt = 1; $attempt -le 18; $attempt++) {
         $probe = Test-DockerEngine
-        if ($probe.Ready) { Write-Host "[$Name] Docker Linux Engine ready on attempt $attempt"; return }
+        if ($probe.Ready) { Say "[$Name] Docker Linux Engine ready on attempt $attempt"; return }
         if ($attempt -eq 3 -and -not $serviceRestartAttempted) {
             $serviceRestartAttempted = $true
             try {
                 $dockerService = Get-Service -Name 'com.docker.service' -ErrorAction Stop
                 if ($dockerService.Status -eq 'Running') { Restart-Service -Name 'com.docker.service' -Force -ErrorAction Stop } else { Start-Service -Name 'com.docker.service' -ErrorAction Stop }
-            } catch { Write-Warning "[$Name] Docker service restart was not available: $($_.Exception.Message)" }
+            } catch { Say "[$Name] Docker service restart was not available: $($_.Exception.Message)" }
         }
         if ($attempt -eq 7 -and -not $desktopStartAttempted) {
             $desktopStartAttempted = $true
             $desktopExe = Join-Path $env:ProgramFiles 'Docker\Docker\Docker Desktop.exe'
-            if (Test-Path $desktopExe) { try { Start-Process -FilePath $desktopExe -WindowStyle Hidden -ErrorAction Stop | Out-Null } catch { Write-Warning "[$Name] Docker Desktop startup request failed: $($_.Exception.Message)" } }
+            if (Test-Path $desktopExe) { try { Start-Process -FilePath $desktopExe -WindowStyle Hidden -ErrorAction Stop | Out-Null } catch { Say "[$Name] Docker Desktop startup request failed: $($_.Exception.Message)" } }
         }
         if ($attempt -eq 18) { Fail "Docker Linux Engine did not become ready. Last response: $($probe.Output)" }
         Start-Sleep -Seconds 5
@@ -111,13 +122,13 @@ $services = @{
 $spec = $services[$Service]
 $sourceDir = [string]$spec.SourceDir
 $repository = [string]$spec.Repository
-Write-Host "[$Service] isolated source: $sourceDir"
+Say "[$Service] isolated source: $sourceDir"
 $staleLock = Join-Path $sourceDir '.git\index.lock'
 if (Test-Path $staleLock) {
     # Left behind by a previous git operation whose SSH client was killed mid-command (eg. by the
     # outer 50-minute timeout) without the remote process actually terminating. git refuses to run
     # while this exists; removing it is git's own documented recovery for a stale lock.
-    Write-Host "[$Service] removing stale git lock from an interrupted previous attempt: $staleLock"
+    Say "[$Service] removing stale git lock from an interrupted previous attempt: $staleLock"
     Remove-Item -Force $staleLock -ErrorAction SilentlyContinue
 }
 
@@ -145,8 +156,8 @@ git -C $sourceDir clean -fd
 if ($LASTEXITCODE -ne 0) { Fail "[$Service] final clean failed" }
 $sourceSha = (git -C $sourceDir rev-parse HEAD | Out-String).Trim()
 if ($sourceSha -ne $remoteSha) { Fail "[$Service] checkout mismatch: local=$sourceSha remote=$remoteSha" }
-Write-Host "[$Service] source SHA: $sourceSha"
-Write-Host "[$Service] verified remote main SHA: $remoteSha"
+Say "[$Service] source SHA: $sourceSha"
+Say "[$Service] verified remote main SHA: $remoteSha"
 
 $previousDockerConfig = $env:DOCKER_CONFIG
 $previousDockerApiVersion = $env:DOCKER_API_VERSION
@@ -155,7 +166,7 @@ New-Item -ItemType Directory -Force -Path $dockerConfigRoot | Out-Null
 '{"auths":{}}' | Set-Content -Path (Join-Path $dockerConfigRoot 'config.json') -Encoding ascii
 $env:DOCKER_CONFIG = $dockerConfigRoot
 $env:DOCKER_API_VERSION = '1.44'
-Write-Host "[$Service] using isolated Docker CLI config and compatible API version"
+Say "[$Service] using isolated Docker CLI config and compatible API version"
 try {
     Wait-DockerEngine -Name $Service
     switch ($Service) {
@@ -218,5 +229,5 @@ try {
     if ([string]::IsNullOrWhiteSpace($previousDockerApiVersion)) { Remove-Item Env:DOCKER_API_VERSION -ErrorAction SilentlyContinue } else { $env:DOCKER_API_VERSION = $previousDockerApiVersion }
     Remove-Item -Recurse -Force $dockerConfigRoot -ErrorAction SilentlyContinue
 }
-Write-Host "[$Service] Server deployment complete"
-Write-Host "[$Service] source SHA: $sourceSha"
+Say "[$Service] Server deployment complete"
+Say "[$Service] source SHA: $sourceSha"

@@ -17,11 +17,28 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Fail {
+    # Invoked via `&` from deploy-hub.ps1 in the same PowerShell process/session over a non-pty
+    # SSH exec - a plain `throw` here was found (elsewhere in this same deploy pipeline) to leave
+    # the whole remote process hung for tens of minutes instead of exiting, because PowerShell's
+    # exception/Write-Host output travels through a separate serialized (CLIXML) channel that can
+    # back up and block the process from ever actually exiting. Write straight to the console
+    # stream and force-exit instead.
+    param([Parameter(Mandatory = $true)][string]$Message)
+    [Console]::Out.WriteLine($Message)
+    [Environment]::Exit(1)
+}
+
+function Say {
+    param([Parameter(Mandatory = $true)][string]$Message)
+    [Console]::Out.WriteLine($Message)
+}
+
 $Caddyfile = Join-Path $MoveAiRoot 'Caddyfile'
 $MoveAiCompose = Join-Path $MoveAiRoot 'docker-compose.yml'
 
-if (-not (Test-Path $Caddyfile)) { throw "MOVEAI Caddyfile not found: $Caddyfile" }
-if (-not (Test-Path $MoveAiCompose)) { throw "MOVEAI docker-compose.yml not found: $MoveAiCompose" }
+if (-not (Test-Path $Caddyfile)) { Fail "MOVEAI Caddyfile not found: $Caddyfile" }
+if (-not (Test-Path $MoveAiCompose)) { Fail "MOVEAI docker-compose.yml not found: $MoveAiCompose" }
 
 $tag = $AppName.ToUpperInvariant()
 $beginMarker = "# BEGIN $tag ROUTE - managed by $AppName deploy"
@@ -51,9 +68,9 @@ $conflicting = [regex]::Matches($content, $anyBlockPattern) |
 
 if ($conflicting) {
     if (-not $AllowTakeover) {
-        throw "$Domain is already managed by $($conflicting.Groups['name'].Value)'s route block. Pass -AllowTakeover to explicitly remove it and reassign this domain to $AppName."
+        Fail "$Domain is already managed by $($conflicting.Groups['name'].Value)'s route block. Pass -AllowTakeover to explicitly remove it and reassign this domain to $AppName."
     }
-    Write-Host "Removing $($conflicting.Groups['name'].Value)'s existing route for $Domain (explicit -AllowTakeover)."
+    Say "Removing $($conflicting.Groups['name'].Value)'s existing route for $Domain (explicit -AllowTakeover)."
     $content = $content.Remove($conflicting.Index, $conflicting.Length)
     $content = [regex]::Replace($content, '(?:\r?\n){3,}', "`r`n`r`n")
     $changed = $true
@@ -69,7 +86,7 @@ if ($content -match "(?s)$escapedBegin.*?$escapedEnd") {
     $content = $updated
 }
 elseif ($content -match "(?m)^\s*$escapedDomain\s*\{") {
-    Write-Host "$Domain is already defined outside any managed block. Existing route will not be overwritten."
+    Say "$Domain is already defined outside any managed block. Existing route will not be overwritten."
 }
 else {
     $separator = if ($content.EndsWith("`n")) { "`n" } else { "`r`n`r`n" }
@@ -83,7 +100,7 @@ if ($changed) {
     $backupFile = "$Caddyfile.$AppName-backup-$timestamp"
     Copy-Item -LiteralPath $Caddyfile -Destination $backupFile -Force
     [System.IO.File]::WriteAllText($Caddyfile, $content, [System.Text.UTF8Encoding]::new($false))
-    Write-Host "Updated MOVEAI Caddyfile. Backup: $backupFile"
+    Say "Updated MOVEAI Caddyfile. Backup: $backupFile"
 }
 
 try {
@@ -98,19 +115,20 @@ try {
     docker compose -f $MoveAiCompose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
     if ($LASTEXITCODE -ne 0) { throw 'Caddy reload failed.' }
 
-    Write-Host "Public route ready: https://$Domain -> host.docker.internal:$HostPort"
+    Say "Public route ready: https://$Domain -> host.docker.internal:$HostPort"
 }
 catch {
+    $reason = $_.Exception.Message
     if ($changed -and $backupFile -and (Test-Path $backupFile)) {
-        Write-Warning 'Caddy update failed. Restoring previous MOVEAI Caddyfile.'
+        Say 'Caddy update failed. Restoring previous MOVEAI Caddyfile.'
         Copy-Item -LiteralPath $backupFile -Destination $Caddyfile -Force
         try {
             Set-Location -LiteralPath $MoveAiRoot
             docker compose -f $MoveAiCompose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile *> $null
         }
         catch {
-            Write-Warning 'Previous Caddyfile was restored, but automatic reload also failed. Check MOVEAI Caddy manually.'
+            Say 'Previous Caddyfile was restored, but automatic reload also failed. Check MOVEAI Caddy manually.'
         }
     }
-    throw
+    Fail "Public route registration failed: $reason"
 }
