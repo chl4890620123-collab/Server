@@ -103,7 +103,10 @@ if (-not (Test-Path 'D:\')) { Fail 'D drive is required for Hub runtime data.' }
 if (-not (Test-Path $ComposeFile)) { Fail "Hub compose file is missing: $ComposeFile" }
 if (-not (Test-Path $CaddyFile)) { Fail "Hub Caddyfile is missing: $CaddyFile" }
 Say '[hub] checking Docker Compose plugin'
-$composeVersion = Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', 'version', '--short') -TimeoutSeconds 30
+# --short isn't supported by every Compose CLI build (seen rejected outright as "unknown flag" on
+# the production machine) and this is purely a log line, not a version gate - AllowFailure so a
+# flag/version quirk here can never abort the whole deploy.
+$composeVersion = Invoke-NativeProcess -FilePath 'docker' -Arguments @('compose', 'version') -TimeoutSeconds 30 -AllowFailure
 Say "[hub] Docker Compose ready: $($composeVersion.StdOut.Trim())"
 
 @($RuntimeRoot, $DbDataRoot, $StorageDataRoot, $BackupRoot) | ForEach-Object {
