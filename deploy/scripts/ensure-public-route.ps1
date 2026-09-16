@@ -142,7 +142,14 @@ try {
 
     # Idempotent: starts the shared caddy container if it isn't running yet (bootstrap case, or it
     # was stopped), no-ops if it's already up and unchanged.
-    docker compose -f $MoveAiCompose up -d *> $null
+    # Unlike `config`/`exec validate`/`exec reload` above and below (silent on success, and already
+    # proven safe here), `compose up` always writes its container-creation/start progress to stderr
+    # even on success. Under $ErrorActionPreference = 'Stop', a native command's stderr write can
+    # surface as a terminating PowerShell error regardless of redirection (`*> $null` included) -
+    # confirmed elsewhere in this same deploy pipeline - which would fail this step even though
+    # Docker itself succeeded. try/catch is the one thing that reliably suppresses that; the real
+    # outcome is still read from $LASTEXITCODE right after.
+    try { docker compose -f $MoveAiCompose up -d *> $null } catch {}
     if ($LASTEXITCODE -ne 0) { throw 'MOVEAI docker compose up failed.' }
 
     docker compose -f $MoveAiCompose exec -T caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
