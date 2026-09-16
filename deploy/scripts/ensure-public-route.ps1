@@ -34,6 +34,56 @@ function Say {
     [Console]::Out.WriteLine($Message)
 }
 
+function Invoke-Docker {
+    # Same fix as deploy-hub.ps1's Invoke-Docker. Every bare `docker ...` call below relied on
+    # $LASTEXITCODE and on stderr staying out of PowerShell's own streams, but under
+    # $ErrorActionPreference = 'Stop' a native command's stderr write is promoted to a terminating
+    # PowerShell error regardless of redirection (`*> $null` included) - confirmed elsewhere in this
+    # deploy pipeline. Only the `compose up` call had a try/catch to survive that; `config`,
+    # `exec validate` and both `exec reload` call sites did not. Run docker directly via
+    # Process.Start instead and drain stdout/stderr with ReadToEndAsync, started before
+    # WaitForExit so neither OS pipe can fill and block the child - stderr then never reaches
+    # PowerShell's error stream, so no call site needs its own try/catch.
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [int]$TimeoutSeconds = 60
+    )
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = 'docker'
+    $psi.Arguments = ($Arguments | ForEach-Object { if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ } }) -join ' '
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.UseShellExecute = $false
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stdoutTask = $proc.StandardOutput.ReadToEndAsync()
+    $stderrTask = $proc.StandardError.ReadToEndAsync()
+    if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
+        try { $proc.Kill() } catch {}
+        throw "Command timed out after ${TimeoutSeconds}s: docker $($Arguments -join ' ')"
+    }
+    $proc.WaitForExit()
+    [System.Threading.Tasks.Task]::WaitAll(@($stdoutTask, $stderrTask), 5000) | Out-Null
+    return [pscustomobject]@{ ExitCode = $proc.ExitCode; StdOut = [string]$stdoutTask.Result; StdErr = [string]$stderrTask.Result }
+}
+
+function Assert-Docker {
+    # Discards output on success; on failure, prints stdout/stderr (the only way to see what went
+    # wrong now that it never reaches PowerShell's own streams) and throws, so the existing outer
+    # try/catch below still restores the Caddyfile backup exactly as before.
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [int]$TimeoutSeconds = 60
+    )
+    $result = Invoke-Docker -Arguments $Arguments -TimeoutSeconds $TimeoutSeconds
+    if ($result.ExitCode -ne 0) {
+        if (-not [string]::IsNullOrWhiteSpace($result.StdOut)) { Say $result.StdOut.Trim() }
+        if (-not [string]::IsNullOrWhiteSpace($result.StdErr)) { Say $result.StdErr.Trim() }
+        throw "Command failed ($($result.ExitCode)): docker $($Arguments -join ' ')"
+    }
+    return $result
+}
+
 $Caddyfile = Join-Path $MoveAiRoot 'Caddyfile'
 $MoveAiCompose = Join-Path $MoveAiRoot 'docker-compose.yml'
 
@@ -137,32 +187,25 @@ if ($changed) {
 try {
     Set-Location -LiteralPath $MoveAiRoot
 
-    docker compose -f $MoveAiCompose config *> $null
-    if ($LASTEXITCODE -ne 0) { throw 'MOVEAI docker compose config failed.' }
+    Assert-Docker -Arguments @('compose', '-f', $MoveAiCompose, 'config') | Out-Null
 
     # Idempotent: starts the shared caddy container if it isn't running yet (bootstrap case, or it
-    # was stopped), no-ops if it's already up and unchanged.
-    # Unlike `config`/`exec validate`/`exec reload` above and below (silent on success, and already
-    # proven safe here), `compose up` always writes its container-creation/start progress to stderr
-    # even on success. Under $ErrorActionPreference = 'Stop', a native command's stderr write can
-    # surface as a terminating PowerShell error regardless of redirection (`*> $null` included) -
-    # confirmed elsewhere in this same deploy pipeline - which would fail this step even though
-    # Docker itself succeeded. try/catch is the one thing that reliably suppresses that; the real
-    # outcome is still read from $LASTEXITCODE right after.
-    try { docker compose -f $MoveAiCompose up -d *> $null } catch {}
-    if ($LASTEXITCODE -ne 0) { throw 'MOVEAI docker compose up failed.' }
+    # was stopped), no-ops if it's already up and unchanged. A fresh bootstrap may need to pull the
+    # caddy:2.10-alpine image first, so this gets more room than the default timeout.
+    Assert-Docker -Arguments @('compose', '-f', $MoveAiCompose, 'up', '-d') -TimeoutSeconds 300 | Out-Null
 
-    docker compose -f $MoveAiCompose exec -T caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-    if ($LASTEXITCODE -ne 0) { throw 'Caddy validation failed.' }
+    Assert-Docker -Arguments @('compose', '-f', $MoveAiCompose, 'exec', '-T', 'caddy', 'caddy', 'validate', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile') | Out-Null
 
-    docker compose -f $MoveAiCompose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-    if ($LASTEXITCODE -ne 0) {
+    $reload = Invoke-Docker -Arguments @('compose', '-f', $MoveAiCompose, 'exec', '-T', 'caddy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile')
+    if ($reload.ExitCode -ne 0) {
         # A container just created by the `up -d` above already loaded this exact Caddyfile at
         # startup, so a failed reload here doesn't mean the route is broken - only warn.
         if ($justBootstrapped) {
             Say 'Caddy reload reported a non-zero exit right after bootstrap; the new container already started with this config, so continuing.'
         }
         else {
+            if (-not [string]::IsNullOrWhiteSpace($reload.StdOut)) { Say $reload.StdOut.Trim() }
+            if (-not [string]::IsNullOrWhiteSpace($reload.StdErr)) { Say $reload.StdErr.Trim() }
             throw 'Caddy reload failed.'
         }
     }
@@ -176,7 +219,7 @@ catch {
         Copy-Item -LiteralPath $backupFile -Destination $Caddyfile -Force
         try {
             Set-Location -LiteralPath $MoveAiRoot
-            docker compose -f $MoveAiCompose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile *> $null
+            Invoke-Docker -Arguments @('compose', '-f', $MoveAiCompose, 'exec', '-T', 'caddy', 'caddy', 'reload', '--config', '/etc/caddy/Caddyfile', '--adapter', 'caddyfile') | Out-Null
         }
         catch {
             Say 'Previous Caddyfile was restored, but automatic reload also failed. Check MOVEAI Caddy manually.'
