@@ -37,8 +37,39 @@ function Say {
 $Caddyfile = Join-Path $MoveAiRoot 'Caddyfile'
 $MoveAiCompose = Join-Path $MoveAiRoot 'docker-compose.yml'
 
-if (-not (Test-Path $Caddyfile)) { Fail "MOVEAI Caddyfile not found: $Caddyfile" }
-if (-not (Test-Path $MoveAiCompose)) { Fail "MOVEAI docker-compose.yml not found: $MoveAiCompose" }
+# The shared MOVEAI Caddy stack was always assumed to pre-exist (set up by hand once) - no deploy
+# script ever wrote code to create it. On a fresh/reset machine that assumption is false, so this
+# bootstraps a minimal shared stack in place the first time it's missing, instead of failing.
+$justBootstrapped = $false
+if (-not (Test-Path $MoveAiRoot)) {
+    New-Item -ItemType Directory -Force -Path $MoveAiRoot | Out-Null
+}
+if (-not (Test-Path $Caddyfile)) {
+    Say "MOVEAI Caddyfile not found at $Caddyfile - bootstrapping a new shared Caddy stack there."
+    "# Shared public reverse proxy. Managed site blocks below are added/removed by each app's deploy.`r`n" |
+        Set-Content -LiteralPath $Caddyfile -Encoding ascii
+    $justBootstrapped = $true
+}
+if (-not (Test-Path $MoveAiCompose)) {
+    @'
+services:
+  caddy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
+'@ | Set-Content -LiteralPath $MoveAiCompose -Encoding ascii
+    $justBootstrapped = $true
+}
 
 $tag = $AppName.ToUpperInvariant()
 $beginMarker = "# BEGIN $tag ROUTE - managed by $AppName deploy"
@@ -109,11 +140,25 @@ try {
     docker compose -f $MoveAiCompose config *> $null
     if ($LASTEXITCODE -ne 0) { throw 'MOVEAI docker compose config failed.' }
 
+    # Idempotent: starts the shared caddy container if it isn't running yet (bootstrap case, or it
+    # was stopped), no-ops if it's already up and unchanged.
+    docker compose -f $MoveAiCompose up -d *> $null
+    if ($LASTEXITCODE -ne 0) { throw 'MOVEAI docker compose up failed.' }
+
     docker compose -f $MoveAiCompose exec -T caddy caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
     if ($LASTEXITCODE -ne 0) { throw 'Caddy validation failed.' }
 
     docker compose -f $MoveAiCompose exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile
-    if ($LASTEXITCODE -ne 0) { throw 'Caddy reload failed.' }
+    if ($LASTEXITCODE -ne 0) {
+        # A container just created by the `up -d` above already loaded this exact Caddyfile at
+        # startup, so a failed reload here doesn't mean the route is broken - only warn.
+        if ($justBootstrapped) {
+            Say 'Caddy reload reported a non-zero exit right after bootstrap; the new container already started with this config, so continuing.'
+        }
+        else {
+            throw 'Caddy reload failed.'
+        }
+    }
 
     Say "Public route ready: https://$Domain -> host.docker.internal:$HostPort"
 }
