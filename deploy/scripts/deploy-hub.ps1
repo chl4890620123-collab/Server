@@ -65,6 +65,25 @@ function Read-EnvFile([string]$Path) {
     return $map
 }
 
+function Set-EnvSetting([string]$Path, [hashtable]$Map, [string]$Key, [string]$Value) {
+    # Unlike Add-EnvSetting (fills a blank once, keeps a manually-set value forever), this always
+    # syncs Key to Value when the caller has a non-blank value to give it - used for connector
+    # OAuth credentials sourced from GitHub Actions Secrets, so rotating a secret there and
+    # redeploying is enough; no RDP session to hand-edit the runtime .env required.
+    if ([string]::IsNullOrWhiteSpace($Value)) { return }
+    if ($Map.ContainsKey($Key) -and [string]$Map[$Key] -eq $Value) { return }
+    $lines = @(Get-Content $Path -ErrorAction SilentlyContinue)
+    $prefix = "$Key="
+    $found = $false
+    $updated = @(for ($i = 0; $i -lt $lines.Count; $i++) {
+        if ($lines[$i].StartsWith($prefix)) { $found = $true; "$Key=$Value" } else { $lines[$i] }
+    })
+    if (-not $found) { $updated += "$Key=$Value" }
+    $updated | Set-Content -Path $Path -Encoding ascii
+    $Map[$Key] = $Value
+    Say "[hub] synced runtime setting from CI: $Key"
+}
+
 function Add-EnvSetting([string]$Path, [hashtable]$Map, [string]$Key, [string]$Value) {
     if (-not $Map.ContainsKey($Key) -or [string]::IsNullOrWhiteSpace([string]$Map[$Key])) {
         Add-Content -Path $Path -Value "$Key=$Value" -Encoding ascii
@@ -191,6 +210,29 @@ if (-not $envMap.ContainsKey('HUB_ADMIN_SETUP_KEY') -or [string]::IsNullOrWhiteS
 }
 if (-not $envMap.ContainsKey('HUB_STT_PII_HASH_KEY') -or [string]::IsNullOrWhiteSpace([string]$envMap['HUB_STT_PII_HASH_KEY'])) {
     Add-EnvSetting $RuntimeEnv $envMap 'HUB_STT_PII_HASH_KEY' (New-SecretValue)
+}
+
+# Connector OAuth credentials and the Gemini key, passed in as HUB_CONNECTOR_* host env vars by
+# _deploy-service.yml (sourced from this Server repo's own GitHub Actions Secrets - a repo's
+# secrets are not visible to a different repo's workflow, so these cannot come from the hub repo's
+# own secrets directly). Synced (not just filled-if-blank) so rotating a secret there and
+# redeploying is enough - no RDP session needed to hand-edit the runtime .env.
+foreach ($pair in @(
+    @('HUB_CONNECTOR_GITHUB_CLIENT_ID', 'GITHUB_CLIENT_ID'),
+    @('HUB_CONNECTOR_GITHUB_CLIENT_SECRET', 'GITHUB_CLIENT_SECRET'),
+    @('HUB_CONNECTOR_SLACK_CLIENT_ID', 'SLACK_CLIENT_ID'),
+    @('HUB_CONNECTOR_SLACK_CLIENT_SECRET', 'SLACK_CLIENT_SECRET'),
+    @('HUB_CONNECTOR_SLACK_TEAM_ID', 'SLACK_TEAM_ID'),
+    @('HUB_CONNECTOR_NOTION_CLIENT_ID', 'NOTION_CLIENT_ID'),
+    @('HUB_CONNECTOR_NOTION_CLIENT_SECRET', 'NOTION_CLIENT_SECRET'),
+    @('HUB_CONNECTOR_GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_ID'),
+    @('HUB_CONNECTOR_GOOGLE_CLIENT_SECRET', 'GOOGLE_CLIENT_SECRET'),
+    @('HUB_CONNECTOR_GEMINI_API_KEY', 'GEMINI_API_KEY')
+)) {
+    $incoming = [Environment]::GetEnvironmentVariable($pair[0])
+    if (-not [string]::IsNullOrWhiteSpace($incoming)) {
+        Set-EnvSetting $RuntimeEnv $envMap $pair[1] $incoming
+    }
 }
 
 # ai-service crashes on startup (RuntimeError, not a slow failure) when HUB_AI_MODE=gemini has no
