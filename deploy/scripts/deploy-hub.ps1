@@ -167,6 +167,16 @@ $dbHasExistingData = $null -ne (Get-ChildItem $DbDataRoot -Force -ErrorAction Si
 Add-EnvSetting $RuntimeEnv $envMap 'HUB_HOST_PORT' '9070'
 Add-EnvSetting $RuntimeEnv $envMap 'DB_NAME' 'hub'
 Add-EnvSetting $RuntimeEnv $envMap 'DB_USER' 'hub'
+Add-EnvSetting $RuntimeEnv $envMap 'HUB_PUBLIC_DOMAIN' 'yellow.it.kr'
+# Connector OAuth callbacks are built from this (see OAuthRedirects.callbackUri in the hub repo).
+# Blank means it falls back to whatever host the request appears to arrive as, which breaks the
+# moment two reverse-proxy hops sit in front of it (this deploy's actual topology: shared MOVEAI
+# Caddy -> hub-caddy -> hub-backend) because the redirect_uri Hub sends no longer matches what's
+# registered with GitHub/Slack/Notion, and the provider refuses to even show its login screen.
+# Fill it from HUB_PUBLIC_DOMAIN so a fresh or previously-blank runtime env self-heals on the next
+# deploy instead of silently failing every connector OAuth attempt until someone edits the file by
+# hand - same self-healing this already does for DB_PASSWORD/HUB_JWT_SECRET, above.
+Add-EnvSetting $RuntimeEnv $envMap 'HUB_PUBLIC_BASE_URL' "https://$([string]$envMap['HUB_PUBLIC_DOMAIN'])"
 
 $missingDbPassword = -not $envMap.ContainsKey('DB_PASSWORD') -or [string]::IsNullOrWhiteSpace([string]$envMap['DB_PASSWORD'])
 if ($missingDbPassword -and $dbHasExistingData) {
