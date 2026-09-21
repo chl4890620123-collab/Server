@@ -1,0 +1,84 @@
+name: diagnose-docker
+
+# Read-only SSH diagnostic for the mini PC's Docker state. Nothing here changes anything on the
+# box - it only reports service/process state and docker's own version handshake - so it is safe
+# to run whenever a deploy fails with a Docker-connectivity error to see what actually happened
+# before deciding on a fix. Manual trigger only.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_PORT: ${{ secrets.SERVER_PORT }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
+    steps:
+      - name: Read-only Docker/service diagnostics over SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$SERVER_HOST" ] || [ -z "$SERVER_USER" ] || { [ -z "$SERVER_SSH_KEY" ] && [ -z "$SERVER_PASSWORD" ]; }; then
+            echo 'Server SSH secrets are not configured in the Server repository.' >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+          port="${SERVER_PORT:-22}"
+          key_args=()
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/server_deploy_key"
+            chmod 600 "$HOME/.ssh/server_deploy_key"
+            key_args=(-i "$HOME/.ssh/server_deploy_key")
+          fi
+          if [ -n "$SERVER_PASSWORD" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SERVER_PASSWORD"
+            auth=(sshpass -e ssh "${key_args[@]}")
+          else
+            auth=(ssh "${key_args[@]}")
+          fi
+          ssh_options=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o ServerAliveInterval=10 -o ServerAliveCountMax=60 -o TCPKeepAlive=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+
+          remote_script="$RUNNER_TEMP/diagnose-docker.ps1"
+          cat > "$remote_script" <<'PWSH'
+          $ErrorActionPreference = 'Continue'
+          [Console]::Out.WriteLine('--- docker-related services ---')
+          Get-Service | Where-Object { $_.Name -match 'docker' -or $_.DisplayName -match 'Docker' } |
+              Format-Table -AutoSize Name,DisplayName,Status | Out-String -Width 200 | Write-Output
+
+          [Console]::Out.WriteLine('--- docker-related processes ---')
+          Get-Process | Where-Object { $_.Name -match 'docker|com.docker' } |
+              Format-Table -AutoSize Id,Name,StartTime | Out-String -Width 200 | Write-Output
+
+          [Console]::Out.WriteLine('--- docker version ---')
+          docker version 2>&1 | Write-Output
+
+          [Console]::Out.WriteLine('--- docker context ls ---')
+          docker context ls 2>&1 | Write-Output
+
+          [Console]::Out.WriteLine('--- existing hub-production containers ---')
+          docker ps -a --filter "name=hub-" 2>&1 | Write-Output
+
+          [Console]::Out.WriteLine('--- shared Caddy (saver-caddy-1) ---')
+          docker ps -a --filter "name=saver-caddy" 2>&1 | Write-Output
+
+          [Console]::Out.WriteLine('--- WSL status (Docker Desktop WSL2 backend) ---')
+          wsl --status 2>&1 | Write-Output
+          wsl -l -v 2>&1 | Write-Output
+
+          [Console]::Out.WriteLine('--- Docker Desktop process / install check ---')
+          Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+          Test-Path 'C:\Program Files\Docker\Docker\Docker Desktop.exe' | Write-Output
+          PWSH
+
+          wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
+          encoded_wrapper="$(printf '%s' "$wrapper" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
+          remote_command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded_wrapper"
+          timeout 3m "${auth[@]}" -p "$port" "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "$remote_command" < "$remote_script"
