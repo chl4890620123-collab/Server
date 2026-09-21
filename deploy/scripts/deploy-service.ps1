@@ -112,6 +112,24 @@ function Wait-DockerEngine {
     }
 }
 
+# The system clock has drifted before (once ~26 days behind), which silently breaks every
+# outbound TLS call this script makes - git fetch over https, `docker build --pull` against
+# Docker Hub - because the far end's certificate validity window fails to check out against a
+# machine that thinks it's a different day. `docker build --pull` for pgvector/pgvector:pg16
+# failed exactly this way: "certificate has expired or is not yet valid: current time
+# 2026-08-26T13:49:48Z is before 2026-09-05T00:51:31Z". Force an NTP resync before touching git or
+# Docker at all, on every deploy, so this doesn't need a manual RDP session to notice and fix.
+# Best-effort: if the machine can't reach an NTP server (or w32time isn't running), this is a
+# no-op and the real failure below still surfaces with its own clear error, same as before.
+try {
+    Say "[time] before resync: $(Get-Date -Format o)"
+    $resyncOutput = (w32tm /resync /force 2>&1 | Out-String).Trim()
+    Say "[time] w32tm /resync: $resyncOutput"
+    Say "[time] after resync: $(Get-Date -Format o)"
+} catch {
+    Say "[time] resync attempt failed: $($_.Exception.Message)"
+}
+
 $services = @{
     maple = @{ Repository = 'https://github.com/chl4890620123-collab/maple.git'; SourceDir = Join-Path $SourcesRoot 'maple' }
     aitm = @{ Repository = 'https://github.com/chl4890620123-collab/Aitm.git'; SourceDir = Join-Path $SourcesRoot 'aitm' }
