@@ -52,27 +52,8 @@ jobs:
           SERVER_PORT: ${{ secrets.SERVER_PORT }}
           SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
           SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
-          # hub-only connector OAuth credentials. Must live in THIS repo's secrets, not the hub
-          # app repo's - a repo's Actions secrets are not visible to a different repo's workflow,
-          # and this is the repo that actually runs the deploy. Read by deploy-hub.ps1 via the
-          # HUB_CONNECTOR_* host env vars set further down; a no-op for maple/aitm/restok.
-          HUB_CONNECTOR_GITHUB_CLIENT_ID: ${{ secrets.GITHUB_CLIENT_ID }}
-          HUB_CONNECTOR_GITHUB_CLIENT_SECRET: ${{ secrets.GITHUB_CLIENT_SECRET }}
-          HUB_CONNECTOR_SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
-          HUB_CONNECTOR_SLACK_CLIENT_SECRET: ${{ secrets.SLACK_CLIENT_SECRET }}
-          HUB_CONNECTOR_SLACK_TEAM_ID: ${{ secrets.SLACK_TEAM_ID }}
-          HUB_CONNECTOR_NOTION_CLIENT_ID: ${{ secrets.NOTION_CLIENT_ID }}
-          HUB_CONNECTOR_NOTION_CLIENT_SECRET: ${{ secrets.NOTION_CLIENT_SECRET }}
-          HUB_CONNECTOR_GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
-          HUB_CONNECTOR_GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          HUB_CONNECTOR_GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           set -euo pipefail
-          # Escapes a value for safe embedding inside a PowerShell single-quoted string (doubles
-          # any embedded single quote) - defends the heredoc below against a secret that happens
-          # to contain one; OAuth client ids/secrets typically don't, but nothing else here would
-          # catch it before it corrupted the generated remote script.
-          psq() { printf '%s' "${1//\'/\'\'}"; }
           if [ -z "$SERVER_HOST" ] || [ -z "$SERVER_USER" ] || { [ -z "$SERVER_SSH_KEY" ] && [ -z "$SERVER_PASSWORD" ]; }; then
             echo 'Server SSH secrets are not configured in the Server repository.' >&2
             exit 1
@@ -98,16 +79,6 @@ jobs:
           cat > "$remote_script" <<PWSH
           \$ErrorActionPreference = 'Stop'
           Set-StrictMode -Version Latest
-          \$env:HUB_CONNECTOR_GITHUB_CLIENT_ID = '$(psq "$HUB_CONNECTOR_GITHUB_CLIENT_ID")'
-          \$env:HUB_CONNECTOR_GITHUB_CLIENT_SECRET = '$(psq "$HUB_CONNECTOR_GITHUB_CLIENT_SECRET")'
-          \$env:HUB_CONNECTOR_SLACK_CLIENT_ID = '$(psq "$HUB_CONNECTOR_SLACK_CLIENT_ID")'
-          \$env:HUB_CONNECTOR_SLACK_CLIENT_SECRET = '$(psq "$HUB_CONNECTOR_SLACK_CLIENT_SECRET")'
-          \$env:HUB_CONNECTOR_SLACK_TEAM_ID = '$(psq "$HUB_CONNECTOR_SLACK_TEAM_ID")'
-          \$env:HUB_CONNECTOR_NOTION_CLIENT_ID = '$(psq "$HUB_CONNECTOR_NOTION_CLIENT_ID")'
-          \$env:HUB_CONNECTOR_NOTION_CLIENT_SECRET = '$(psq "$HUB_CONNECTOR_NOTION_CLIENT_SECRET")'
-          \$env:HUB_CONNECTOR_GOOGLE_CLIENT_ID = '$(psq "$HUB_CONNECTOR_GOOGLE_CLIENT_ID")'
-          \$env:HUB_CONNECTOR_GOOGLE_CLIENT_SECRET = '$(psq "$HUB_CONNECTOR_GOOGLE_CLIENT_SECRET")'
-          \$env:HUB_CONNECTOR_GEMINI_API_KEY = '$(psq "$HUB_CONNECTOR_GEMINI_API_KEY")'
           function Fail {
               # A plain \`throw\` can leave this whole script hung for tens of minutes instead of
               # exiting - PowerShell's exception/Write-Host output travels through a separate
