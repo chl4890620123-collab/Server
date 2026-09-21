@@ -191,15 +191,29 @@ New-Item -ItemType Directory -Force -Path $dockerPluginRoot | Out-Null
 # containerized `docker-container` driver, which does its own separate registry/credential
 # resolution and reintroduced the already-solved Windows credential-helper failure
 # ("A specified logon session does not exist") for a completely different reason.
+$composePlugin = $null
 foreach ($pluginSource in @(
     (Join-Path $env:USERPROFILE '.docker\cli-plugins'),
     (Join-Path $env:ProgramFiles 'Docker\Docker\resources\cli-plugins'),
     (Join-Path $env:ProgramFiles 'Docker\cli-plugins')
 )) {
-    $composePlugin = Join-Path $pluginSource 'docker-compose.exe'
-    if (Test-Path $composePlugin) {
-        Copy-Item $composePlugin (Join-Path $dockerPluginRoot 'docker-compose.exe') -Force
-    }
+    $candidate = Join-Path $pluginSource 'docker-compose.exe'
+    if (Test-Path $candidate) { $composePlugin = $candidate; break }
+}
+if (-not $composePlugin) {
+    # A Docker Desktop reinstall/update moves its own install layout - these 3 fixed paths were
+    # the known layout as of when this was written, not a permanent contract. Rather than fail
+    # every deploy with the cryptic downstream symptom ("docker compose" falling through to the
+    # root docker CLI's own parser: "unknown flag: --env-file", which does not mention compose or
+    # a missing plugin at all), search for it before giving up. Bounded depth so this can't turn
+    # into a slow crawl of the whole Program Files tree.
+    $composePlugin = Get-ChildItem -Path $env:ProgramFiles -Filter 'docker-compose.exe' -Recurse -Depth 5 -ErrorAction SilentlyContinue |
+        Select-Object -First 1 -ExpandProperty FullName
+}
+if ($composePlugin) {
+    Copy-Item $composePlugin (Join-Path $dockerPluginRoot 'docker-compose.exe') -Force
+} else {
+    Say "[$Service] warning: docker-compose.exe was not found under any known Docker Desktop path or $env:ProgramFiles - 'docker compose' calls below will fail with 'unknown flag'"
 }
 $env:DOCKER_CONFIG = $dockerConfigRoot
 $env:DOCKER_API_VERSION = '1.44'
