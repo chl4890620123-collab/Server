@@ -37,7 +37,10 @@ $ServerRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $ComposeFile = Join-Path $ServerRoot 'deploy\compose\hub.yml'
 $CaddyFile = Join-Path $ServerRoot 'deploy\caddy\hub.Caddyfile'
 $PublicRoutePath = Join-Path $ServerRoot 'deploy\scripts\ensure-public-route.ps1'
-$DataRoot = 'D:\server-data\hub'
+# Override on the host (persistent machine/user env var, e.g. `setx HUB_DEPLOY_DATA_ROOT D:\server-data\hub2`)
+# to move Postgres/storage/backups off the default subpath without touching this script or the
+# workflow that calls it - useful when something else under D:\server-data has crowded it out.
+$DataRoot = if ($env:HUB_DEPLOY_DATA_ROOT) { $env:HUB_DEPLOY_DATA_ROOT } else { 'D:\server-data\hub' }
 $RuntimeRoot = Join-Path $DataRoot 'runtime'
 $RuntimeEnv = Join-Path $RuntimeRoot '.env'
 $DbDataRoot = Join-Path $DataRoot 'postgres'
