@@ -11,7 +11,7 @@ permissions:
 jobs:
   diagnose:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     env:
       SERVER_HOST: ${{ secrets.SERVER_HOST }}
       SERVER_USER: ${{ secrets.SERVER_USER }}
@@ -58,9 +58,27 @@ jobs:
 
           [Console]::Out.WriteLine('--- hub-db last 100 log lines ---')
           docker logs --tail 100 hub-db 2>&1 | Write-Output
+
+          [Console]::Out.WriteLine('--- disk space ---')
+          Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID,@{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}},@{N='SizeGB';E={[math]::Round($_.Size/1GB,1)}} | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+
+          [Console]::Out.WriteLine('--- memory ---')
+          Get-CimInstance Win32_OperatingSystem | Select-Object @{N='FreeGB';E={[math]::Round($_.FreePhysicalMemory/1MB,1)}},@{N='TotalGB';E={[math]::Round($_.TotalVisibleMemorySize/1MB,1)}} | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+
+          [Console]::Out.WriteLine('--- docker system df ---')
+          docker system df -v 2>&1 | Select-Object -First 40 | Write-Output
+
+          [Console]::Out.WriteLine('--- all containers (any project) ---')
+          docker ps -a 2>&1 | Write-Output
+
+          [Console]::Out.WriteLine('--- top CPU processes ---')
+          Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name,Id,CPU,@{N='MemMB';E={[math]::Round($_.WorkingSet64/1MB,0)}} | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+
+          [Console]::Out.WriteLine('--- docker/build-related processes ---')
+          Get-Process | Where-Object { $_.Name -match 'docker|com\.docker|buildkit|gradle|java|node' } | Select-Object Name,Id,StartTime,@{N='MemMB';E={[math]::Round($_.WorkingSet64/1MB,0)}} | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
           PWSH
 
           wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
           encoded_wrapper="$(printf '%s' "$wrapper" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
           remote_command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded_wrapper"
-          timeout 3m "${auth[@]}" -p "$port" "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "$remote_command" < "$remote_script"
+          timeout 6m "${auth[@]}" -p "$port" "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "$remote_command" < "$remote_script"
