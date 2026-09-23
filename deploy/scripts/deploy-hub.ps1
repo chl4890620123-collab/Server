@@ -36,7 +36,6 @@ if ($ExpectedSha -notmatch '^[0-9a-f]{40}$') {
 $ServerRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $ComposeFile = Join-Path $ServerRoot 'deploy\compose\hub.yml'
 $CaddyFile = Join-Path $ServerRoot 'deploy\caddy\hub.Caddyfile'
-$PublicRoutePath = Join-Path $ServerRoot 'deploy\scripts\ensure-public-route.ps1'
 # Override on the host (persistent machine/user env var, e.g. `setx HUB_DEPLOY_DATA_ROOT D:\server-data\hub2`)
 # to move Postgres/storage/backups off the default subpath without touching this script or the
 # workflow that calls it - useful when something else under D:\server-data has crowded it out.
@@ -152,8 +151,6 @@ HUB_COOKIE_SECURE=false
 HUB_ENFORCE_SECURE_CONFIG=false
 HUB_PUBLIC_DOMAIN=yellow.it.kr
 HUB_PUBLIC_BASE_URL=
-HUB_OUTER_CADDY_AUTO_CONFIGURE=true
-HUB_ALLOW_DOMAIN_TAKEOVER=true
 HUB_AI_MODE=mock
 GEMINI_API_KEY=
 HUB_EMBED_MODE=e5
@@ -170,13 +167,15 @@ Add-EnvSetting $RuntimeEnv $envMap 'DB_USER' 'hub'
 Add-EnvSetting $RuntimeEnv $envMap 'HUB_PUBLIC_DOMAIN' 'yellow.it.kr'
 # Connector OAuth callbacks are built from this (see OAuthRedirects.callbackUri in the hub repo).
 # Blank means it falls back to whatever host the request appears to arrive as, which breaks the
-# moment two reverse-proxy hops sit in front of it (this deploy's actual topology: shared MOVEAI
-# Caddy -> hub-caddy -> hub-backend) because the redirect_uri Hub sends no longer matches what's
-# registered with GitHub/Slack/Notion, and the provider refuses to even show its login screen.
-# Fill it from HUB_PUBLIC_DOMAIN so a fresh or previously-blank runtime env self-heals on the next
-# deploy instead of silently failing every connector OAuth attempt until someone edits the file by
-# hand - same self-healing this already does for DB_PASSWORD/HUB_JWT_SECRET, above.
-Add-EnvSetting $RuntimeEnv $envMap 'HUB_PUBLIC_BASE_URL' "https://$([string]$envMap['HUB_PUBLIC_DOMAIN'])"
+# moment the request doesn't already look like the public address - here hub is reached directly at
+# http://<domain>:<HUB_HOST_PORT> (no TLS-terminating proxy in front; see hub.Caddyfile), so this
+# must include the port and use http, not just the bare domain over https, or the redirect_uri Hub
+# sends won't match what's registered with GitHub/Slack/Notion and the provider refuses to even show
+# its login screen. Fill it from HUB_PUBLIC_DOMAIN + HUB_HOST_PORT so a fresh or previously-blank
+# runtime env self-heals on the next deploy instead of silently failing every connector OAuth
+# attempt until someone edits the file by hand - same self-healing this already does for
+# DB_PASSWORD/HUB_JWT_SECRET, above.
+Add-EnvSetting $RuntimeEnv $envMap 'HUB_PUBLIC_BASE_URL' "http://$([string]$envMap['HUB_PUBLIC_DOMAIN']):$([string]$envMap['HUB_HOST_PORT'])"
 
 $missingDbPassword = -not $envMap.ContainsKey('DB_PASSWORD') -or [string]::IsNullOrWhiteSpace([string]$envMap['DB_PASSWORD'])
 if ($missingDbPassword -and $dbHasExistingData) {
@@ -249,11 +248,13 @@ foreach ($image in @('hub-production-ai:latest', 'hub-production-backend:latest'
     if (-not $imageExists) { Fail "Hub application image is missing: $image" }
 }
 
-$inspect = Invoke-Docker -Arguments @('image', 'inspect', 'hub-production-backend:latest') -TimeoutSeconds 45
-$inspectData = $inspect.StdOut | ConvertFrom-Json
-$revision = [string]$inspectData[0].Config.Labels.'org.opencontainers.image.revision'
-if ($revision -ne $ExpectedSha) {
-    Fail "Hub backend image revision mismatch: expected=$ExpectedSha actual=$revision"
+foreach ($image in @('hub-production-backend:latest', 'hub-production-ai:latest')) {
+    $inspect = Invoke-Docker -Arguments @('image', 'inspect', $image) -TimeoutSeconds 45
+    $inspectData = $inspect.StdOut | ConvertFrom-Json
+    $revision = [string]$inspectData[0].Config.Labels.'org.opencontainers.image.revision'
+    if ($revision -ne $ExpectedSha) {
+        Fail "$image revision mismatch: expected=$ExpectedSha actual=$revision"
+    }
 }
 
 $psResult = Invoke-Docker -Arguments @('ps', '--format', '{{.Names}}') -TimeoutSeconds 45
@@ -311,24 +312,15 @@ if (-not $localReady) { Fail 'Hub local functional check failed.' }
 
 $publicDomain = [string]$envMap['HUB_PUBLIC_DOMAIN']
 if ([string]::IsNullOrWhiteSpace($publicDomain)) { $publicDomain = 'yellow.it.kr' }
-$autoConfigureOuterCaddy = ([string]$envMap['HUB_OUTER_CADDY_AUTO_CONFIGURE']).ToLowerInvariant() -eq 'true'
-$allowDomainTakeover = ([string]$envMap['HUB_ALLOW_DOMAIN_TAKEOVER']).ToLowerInvariant() -eq 'true'
-$moveAiRoot = if ($envMap.ContainsKey('MOVEAI_ROOT') -and -not [string]::IsNullOrWhiteSpace([string]$envMap['MOVEAI_ROOT'])) { [string]$envMap['MOVEAI_ROOT'] } else { 'C:/saver' }
 
-if ($autoConfigureOuterCaddy) {
-    Say "[hub] registering public route on the shared MOVEAI Caddy: $publicDomain -> :$publicPort"
-    & $PublicRoutePath -MoveAiRoot $moveAiRoot -Domain $publicDomain -HostPort $publicPort -AppName 'hub' -AllowTakeover:$allowDomainTakeover
-    if (-not $?) { Fail 'Public route registration failed.' }
-} else {
-    Say '[hub] HUB_OUTER_CADDY_AUTO_CONFIGURE=false; existing MOVEAI Caddyfile was not modified.'
-}
-
+# Hub deliberately does not register a route on the shared MOVEAI Caddy (dahum/moveai/yellow-server
+# still use that instance and are out of scope here - see project memory on the 2026-09-23 decision
+# to stop routing hub through it). Instead hub is reached directly at its own host port; the
+# domain's public IP must have that exact port forwarded to this machine (network-level, outside
+# this script). `_deploy-service.yml`'s verification step already recognizes this exact
+# "http://<domain>:<port>" shape as a valid public URL.
 $ExpectedSha | Set-Content -Path $MarkerFile -Encoding ascii
 Say '[hub] deployment complete'
 Say "[hub] local URL: $localBase"
-if ($autoConfigureOuterCaddy) {
-    Say "[hub] forwarded URL: https://$publicDomain"
-} else {
-    Say '[hub] HUB_OUTER_CADDY_AUTO_CONFIGURE=false; no public URL yet - only the local URL above is reachable.'
-}
+Say "[hub] public URL (requires port $publicPort forwarded to this host): http://$publicDomain`:$publicPort"
 Say "[hub] source SHA: $ExpectedSha"

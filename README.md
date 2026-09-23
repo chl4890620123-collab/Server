@@ -81,7 +81,7 @@ D:\server-data\hub\storage
 D:\server-data\hub\backups
 ```
 
-컨테이너 이름과 Docker network는 `hub-*`로 분리합니다. DB 포트는 호스트에 publish하지 않습니다. Hub는 공유 Caddy(`saver-caddy-1`)의 public route를 통해 `yellow.it.kr`로 서빙되며, `deploy/scripts/ensure-public-route.ps1`이 그 라우트 등록을 보장합니다.
+컨테이너 이름과 Docker network는 `hub-*`로 분리합니다. DB 포트는 호스트에 publish하지 않습니다. Hub는 공유 Caddy(`saver-caddy-1`, dahum/moveai/yellow-server 전용)를 거치지 않고 `yellow.it.kr:HUB_HOST_PORT`로 직접 노출됩니다 (`deploy/scripts/ensure-public-route.ps1`은 다른 앱들을 위해 남아있을 뿐, hub 배포는 더 이상 호출하지 않습니다).
 
 ## 데이터 보호 원칙
 

@@ -115,9 +115,9 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Host port reached by the existing shared MOVEAI Caddy (host.docker.internal:<port>) once its
-  # public route is enabled - see deploy/scripts/ensure-public-route.ps1. Until then Hub is reachable
-  # only at http://<mini-pc>:<HUB_HOST_PORT> directly, same as Dahum's own :9000 before its route existed.
+  # Hub does not route through the shared MOVEAI Caddy (dahum/moveai/yellow-server keep using that
+  # instance separately). This host port is hub's own direct public entry point - reachable at
+  # http://<HUB_PUBLIC_DOMAIN>:<HUB_HOST_PORT> once that port is forwarded to this machine.
   caddy:
     image: caddy:2.10-alpine
     pull_policy: never
