@@ -62,7 +62,8 @@ jobs:
             [Console]::Out.WriteLine("=== $dir ===")
             if (Test-Path $dir) {
               $sizeBytes = (Get-ChildItem $dir -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
-              $sizeGB = [math]::Round((($sizeBytes ?? 0) / 1GB), 2)
+              if (-not $sizeBytes) { $sizeBytes = 0 }
+              $sizeGB = [math]::Round(($sizeBytes / 1GB), 2)
               [Console]::Out.WriteLine("size: ${sizeGB} GB")
               Get-ChildItem $dir -ErrorAction SilentlyContinue | Select-Object Name,LastWriteTime | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
             } else {
