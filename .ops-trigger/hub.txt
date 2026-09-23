@@ -1,3 +1,5 @@
 Hub production deployment trigger
 First onboarding of the Hub intranet app into the central deployment system.
 Triggered: 2026-09-15T17:40:00+09:00
+Deploy Hub source: acab82e7a1fbed076bb8da123593b5337060091f
+Requested: 2026-09-23
