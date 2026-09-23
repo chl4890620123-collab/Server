@@ -322,5 +322,5 @@ if ([string]::IsNullOrWhiteSpace($publicDomain)) { $publicDomain = 'yellow.it.kr
 $ExpectedSha | Set-Content -Path $MarkerFile -Encoding ascii
 Say '[hub] deployment complete'
 Say "[hub] local URL: $localBase"
-Say "[hub] public URL (requires port $publicPort forwarded to this host): http://$publicDomain`:$publicPort"
+Say "[hub] public URL: https://$publicDomain"
 Say "[hub] source SHA: $ExpectedSha"
