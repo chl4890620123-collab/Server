@@ -1,9 +1,11 @@
 name: decommission-old-services
 
-# One-off cleanup: removes the leftover Docker images and D:\server-data directories for
-# maple/restok/aitm, which are already stopped and fully removed from this repo's deploy
-# pipeline (see the commit that removed deploy/compose/{maple,restok,aitm}.yml). Does not touch
-# hub or the shared Caddy. Manual trigger only - delete this workflow file after running it once.
+# One-off cleanup, part 2: removes the leftover ghcr.io/est-ai-challengers-31/saver-ai and
+# saver-backend images - one per past commit from the old pre-built-bundle deploy mechanism for
+# the now-removed maple/restok/aitm services (the "saver" repo was their central build/transfer
+# point). Confirmed via a full `docker ps -a` that no container anywhere on this box references
+# either image family. Touches nothing named dahum/moveai/yellow-server - out of scope. Manual
+# trigger only - delete this workflow file after running it once.
 on:
   workflow_dispatch:
 
@@ -21,7 +23,7 @@ jobs:
       SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
       SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
     steps:
-      - name: Remove images and data directories over SSH
+      - name: Remove old saver-ai/saver-backend images over SSH
         shell: bash
         run: |
           set -euo pipefail
@@ -46,42 +48,29 @@ jobs:
           fi
           ssh_options=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o ServerAliveInterval=10 -o ServerAliveCountMax=60 -o TCPKeepAlive=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
 
-          remote_script="$RUNNER_TEMP/decommission-old-services.ps1"
+          remote_script="$RUNNER_TEMP/decommission-saver-images.ps1"
           cat > "$remote_script" <<'PWSH'
           $ErrorActionPreference = 'Continue'
 
-          [Console]::Out.WriteLine('--- containers matching aitm/maple/restok (expect none) ---')
-          docker ps -a --filter "name=aitm" --filter "name=maple" --filter "name=restok" 2>&1 | Write-Output
+          [Console]::Out.WriteLine('--- safety re-check: any container using saver-ai/saver-backend? (expect none) ---')
+          docker ps -a --format "{{.Names}}: {{.Image}}" 2>&1 | Select-String -Pattern 'saver-ai|saver-backend' | Write-Output
 
-          [Console]::Out.WriteLine('--- removing images ---')
-          $imageNames = @(
-            'maple-production-app:latest',
-            'restok-production-ai:latest','restok-production-backend:latest','restok-production-frontend:latest',
-            'aitm-production-ai:latest','aitm-production-backend:latest','aitm-production-frontend:latest'
-          )
-          foreach ($img in $imageNames) {
-            docker image rm -f $img 2>&1 | Write-Output
+          [Console]::Out.WriteLine('--- removing saver-ai / saver-backend images ---')
+          $targets = docker images --format "{{.Repository}}:{{.Tag}}" 2>&1 |
+            Select-String -Pattern '^ghcr\.io/est-ai-challengers-31/saver-(ai|backend):'
+          $count = 0
+          foreach ($img in $targets) {
+            $name = $img.ToString().Trim()
+            docker image rm -f $name 2>&1 | Out-Null
+            $count++
           }
-          $ghcrImages = docker images --format "{{.Repository}}:{{.Tag}}" 2>&1 | Select-String -Pattern 'ghcr\.io/est-ai-challengers-31/saver-(aitm|maple)'
-          foreach ($img in $ghcrImages) {
-            docker image rm -f $img.ToString().Trim() 2>&1 | Write-Output
-          }
-
-          [Console]::Out.WriteLine('--- removing D:\server-data directories ---')
-          foreach ($dir in @('D:\server-data\aitm','D:\server-data\maple','D:\server-data\restok','D:\server-data\sources\aitm','D:\server-data\sources\maple','D:\server-data\sources\restok')) {
-            if (Test-Path $dir) {
-              Remove-Item -Recurse -Force $dir -ErrorAction Continue
-              [Console]::Out.WriteLine("removed: $dir")
-            } else {
-              [Console]::Out.WriteLine("already absent: $dir")
-            }
-          }
+          [Console]::Out.WriteLine("removed $count image tags")
 
           [Console]::Out.WriteLine('--- disk space after ---')
           Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID,@{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}},@{N='SizeGB';E={[math]::Round($_.Size/1GB,1)}} | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
 
-          [Console]::Out.WriteLine('--- remaining docker images (sanity check) ---')
-          docker images 2>&1 | Write-Output
+          [Console]::Out.WriteLine('--- hub containers still healthy (sanity check) ---')
+          docker ps --filter "name=hub-" --format "table {{.Names}}\t{{.Status}}" 2>&1 | Write-Output
           PWSH
 
           wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
