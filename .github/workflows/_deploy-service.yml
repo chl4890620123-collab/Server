@@ -33,9 +33,6 @@ jobs:
         run: |
           set -euo pipefail
           case "$SERVICE" in
-            maple) functional_path='/api/meister/meta' ;;
-            aitm) functional_path='/api/standards' ;;
-            restok) functional_path='/api/auth/health' ;;
             hub) functional_path='/actuator/health' ;;
             *) echo "Unsupported service: $SERVICE" >&2; exit 1 ;;
           esac

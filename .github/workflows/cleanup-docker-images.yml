@@ -2,9 +2,8 @@ name: cleanup-docker-images
 
 # Frees disk space by removing dangling Docker images only (docker image prune -f): images with no
 # tag AND no container referencing them. Never touches a running container, a tagged image any
-# service's compose file points at, or volumes/networks. Safe across every service on the box (hub,
-# maple, restok, aitm) - a dangling image by definition cannot be what's currently deployed. Manual
-# trigger only.
+# service's compose file points at, or volumes/networks - a dangling image by definition cannot be
+# what's currently deployed. Manual trigger only.
 on:
   workflow_dispatch:
 

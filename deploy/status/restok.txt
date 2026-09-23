@@ -1,3 +1,0 @@
-restok_sha=57d0d4ba33d83378135fe06341c950b7acacce4b
-public_url=https://efforts-fisher-counted-builds.trycloudflare.com
-local_url=http://127.0.0.1:9050

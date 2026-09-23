@@ -4,6 +4,4 @@
 Thumbs.db
 
 deploy/status/ssh-output.txt
-deploy/status/restok-ssh-output.txt
 deploy/status/runtime-probe.txt
-deploy/status/restok-runtime-probe.txt

@@ -31,31 +31,9 @@ jobs:
         run: |
           set -euo pipefail
           test -f deploy/scripts/deploy-service.ps1
-          grep -q "ValidateSet('maple', 'aitm', 'restok', 'hub')" deploy/scripts/deploy-service.ps1
+          grep -q "ValidateSet('hub')" deploy/scripts/deploy-service.ps1
           grep -Fq "C:\\home\\server\\sources" deploy/scripts/deploy-service.ps1
-          grep -q 'chl4890620123-collab/maple.git' deploy/scripts/deploy-service.ps1
-          grep -q 'chl4890620123-collab/Aitm.git' deploy/scripts/deploy-service.ps1
-          grep -q 'chl4890620123-collab/Restok-Rangchain.git' deploy/scripts/deploy-service.ps1
           grep -q 'chl4890620123-collab/hub.git' deploy/scripts/deploy-service.ps1
-
-      - name: Enforce independent service wiring
-        shell: bash
-        run: |
-          set -euo pipefail
-          if grep -RInE 'RESTOK_(DB|AI)|restok\.ai|X-RESTOK-AI-TOKEN' \
-            deploy/compose/aitm.yml deploy/runtime/aitm.env.example deploy/scripts/deploy-aitm.ps1 deploy/scripts/recover-aitm.ps1; then
-            echo 'Aitm operations files must not depend on Restok runtime names.' >&2
-            exit 1
-          fi
-          if grep -RInE 'AITM_(DB|AI)|aitm\.ai|X-AITM-AI-TOKEN' \
-            deploy/compose/restok.yml deploy/runtime/restok.env.example deploy/scripts/deploy-restok.ps1; then
-            echo 'Restok operations files must not depend on Aitm runtime names.' >&2
-            exit 1
-          fi
-          if grep -q '/api/health' deploy/scripts/deploy-aitm.ps1; then
-            echo 'Aitm deployment verification must use functional routes instead of /api/health.' >&2
-            exit 1
-          fi
 
       - name: Validate PowerShell deployment scripts parse
         shell: pwsh
@@ -63,12 +41,6 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $files = @(
             'deploy/scripts/deploy-service.ps1',
-            'deploy/scripts/deploy-aitm.ps1',
-            'deploy/scripts/recover-aitm.ps1',
-            'deploy/scripts/deploy-restok.ps1',
-            'deploy/scripts/check-restok-legacy-data.ps1',
-            'deploy/scripts/deploy-maple.ps1',
-            'deploy/scripts/run-maple-deploy.ps1',
             'deploy/scripts/deploy-hub.ps1',
             'deploy/scripts/ensure-public-route.ps1'
           )
@@ -83,52 +55,6 @@ jobs:
             }
             Write-Host "PowerShell syntax OK: $file"
           }
-
-      - name: Validate Aitm production Compose
-        shell: bash
-        env:
-          DB_NAME: aitm
-          DB_USER: aitm_app
-          AITM_DB_PASSWORD: ci-aitm-password
-          AITM_DB_ROOT_PASSWORD: ci-aitm-root-password
-          AITM_DB_DATA_DIR: /tmp/aitm-db
-          AITM_AI_SECURE_TOKEN: ci-aitm-ai-token
-          AITM_VIDEO_DATA_DIR: /tmp/aitm-videos
-          AITM_CADDYFILE: /tmp/aitm.Caddyfile
-          AITM_CLOUDFLARED_BINARY: /tmp/cloudflared
-          AITM_LOCAL_PORT: "9060"
-        run: docker compose -p aitm-validation -f deploy/compose/aitm.yml config >/dev/null
-
-      - name: Validate Restok production Compose
-        shell: bash
-        env:
-          RESTOK_SOURCE_DIR: /tmp/restok-source
-          RESTOK_DB_DATA_DIR: /tmp/restok-db
-          RESTOK_UPLOAD_DATA_DIR: /tmp/restok-uploads
-          RESTOK_CADDYFILE: /tmp/restok.Caddyfile
-          RESTOK_CLOUDFLARED_BINARY: /tmp/cloudflared
-          RESTOK_LOCAL_PORT: "9050"
-          DB_NAME: restock_db
-          DB_USER: restok
-          DB_PASSWORD: ci-restok-password
-          DB_ROOT_PASSWORD: ci-restok-root-password
-          JWT_SECRET: ci-jwt-secret-that-is-at-least-32-bytes-long
-          GEMINI_API_KEY: ""
-        run: docker compose -p restok-validation -f deploy/compose/restok.yml config >/dev/null
-
-      - name: Validate Maple production Compose
-        shell: bash
-        env:
-          MAPLE_DB_DATA_DIR: /tmp/maple-db
-          MAPLE_CADDYFILE: /tmp/maple.Caddyfile
-          MAPLE_CLOUDFLARED_BINARY: /tmp/cloudflared
-          MAPLE_LOCAL_PORT: "9040"
-          DB_NAME: maple_craft
-          DB_USER: maple_app
-          DB_PASSWORD: ci-maple-password
-          DB_ROOT_PASSWORD: ci-maple-root-password
-          ADMIN_TOKEN: ci-maple-admin-token
-        run: docker compose -p maple-validation -f deploy/compose/maple.yml config >/dev/null
 
       - name: Validate Hub production Compose
         shell: bash
@@ -147,6 +73,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for service in aitm restok maple hub; do
+          for service in hub; do
             docker run --rm -v "$PWD/deploy/caddy/${service}.Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
           done

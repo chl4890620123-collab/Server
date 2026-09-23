@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('maple', 'aitm', 'restok', 'hub')]
+    [ValidateSet('hub')]
     [string]$Service,
     [switch]$Force
 )
@@ -131,9 +131,6 @@ try {
 }
 
 $services = @{
-    maple = @{ Repository = 'https://github.com/chl4890620123-collab/maple.git'; SourceDir = Join-Path $SourcesRoot 'maple' }
-    aitm = @{ Repository = 'https://github.com/chl4890620123-collab/Aitm.git'; SourceDir = Join-Path $SourcesRoot 'aitm' }
-    restok = @{ Repository = 'https://github.com/chl4890620123-collab/Restok-Rangchain.git'; SourceDir = Join-Path $SourcesRoot 'restok' }
     hub = @{ Repository = 'https://github.com/chl4890620123-collab/hub.git'; SourceDir = Join-Path $SourcesRoot 'hub' }
 }
 
@@ -221,34 +218,6 @@ Say "[$Service] using isolated Docker CLI config and compatible API version"
 try {
     Wait-DockerEngine -Name $Service
     switch ($Service) {
-        'maple' {
-            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t maple-production-app:latest $sourceDir
-            if ($LASTEXITCODE -ne 0) { Fail '[maple] Docker build failed' }
-            & (Join-Path $ServerRoot 'deploy\scripts\deploy-maple.ps1') -ExpectedSha $sourceSha
-            if (-not $?) { Fail '[maple] deployment failed' }
-        }
-        'aitm' {
-            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-ai:latest (Join-Path $sourceDir 'demo\ai')
-            if ($LASTEXITCODE -ne 0) { Fail '[aitm] AI build failed' }
-            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-backend:latest (Join-Path $sourceDir 'demo')
-            if ($LASTEXITCODE -ne 0) { Fail '[aitm] backend build failed' }
-            docker build --pull --label "org.opencontainers.image.revision=$sourceSha" -t aitm-production-frontend:latest (Join-Path $sourceDir 'front')
-            if ($LASTEXITCODE -ne 0) { Fail '[aitm] frontend build failed' }
-            & (Join-Path $ServerRoot 'deploy\scripts\deploy-aitm.ps1') -ExpectedSha $sourceSha -Force:$Force
-            if (-not $?) { Fail '[aitm] deployment failed' }
-        }
-        'restok' {
-            docker build --pull -t restok-production-ai:latest (Join-Path $sourceDir 'ai_server')
-            if ($LASTEXITCODE -ne 0) { Fail '[restok] AI build failed' }
-            docker build --pull -t restok-production-backend:latest (Join-Path $sourceDir 'backend')
-            if ($LASTEXITCODE -ne 0) { Fail '[restok] backend build failed' }
-            docker build --pull --build-arg REACT_APP_API_URL= -t restok-production-frontend:latest (Join-Path $sourceDir 'frontend')
-            if ($LASTEXITCODE -ne 0) { Fail '[restok] frontend build failed' }
-            & (Join-Path $ServerRoot 'deploy\scripts\check-restok-legacy-data.ps1')
-            if (-not $?) { Fail '[restok] legacy-data preflight failed' }
-            & (Join-Path $ServerRoot 'deploy\scripts\deploy-restok.ps1') -Force:$Force -Prebuilt
-            if (-not $?) { Fail '[restok] deployment failed' }
-        }
         'hub' {
             # A previous attempt got as far as `docker compose up` and left hub-ai unhealthy,
             # which means hub-db/hub-ai/hub-backend/hub-caddy were created (some started) and then
