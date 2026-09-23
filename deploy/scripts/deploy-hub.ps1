@@ -72,6 +72,19 @@ function Add-EnvSetting([string]$Path, [hashtable]$Map, [string]$Key, [string]$V
     }
 }
 
+function Set-EnvSetting([string]$Path, [hashtable]$Map, [string]$Key, [string]$Value) {
+    $lines = @(Get-Content $Path)
+    $pattern = '^\s*' + [regex]::Escape($Key) + '\s*='
+    if ($lines -match $pattern) {
+        $lines = $lines | ForEach-Object { if ($_ -match $pattern) { "$Key=$Value" } else { $_ } }
+        Set-Content -Path $Path -Value $lines -Encoding ascii
+    } else {
+        Add-Content -Path $Path -Value "$Key=$Value" -Encoding ascii
+    }
+    $Map[$Key] = $Value
+    Say "[hub] enforced runtime setting: $Key"
+}
+
 function Invoke-Docker {
     # Started as a Start-Process-based helper (Invoke-NativeProcess), but Start-Process-spawned
     # docker children were observed not resolving the same config/context as directly-invoked
@@ -147,10 +160,10 @@ DB_PASSWORD=$(New-SecretValue)
 HUB_JWT_SECRET=$(New-SecretValue)
 HUB_ADMIN_SETUP_KEY=$(New-SecretValue)
 HUB_STT_PII_HASH_KEY=$(New-SecretValue)
-HUB_COOKIE_SECURE=false
-HUB_ENFORCE_SECURE_CONFIG=false
+HUB_COOKIE_SECURE=true
+HUB_ENFORCE_SECURE_CONFIG=true
 HUB_PUBLIC_DOMAIN=yellow.it.kr
-HUB_PUBLIC_BASE_URL=
+HUB_PUBLIC_BASE_URL=https://yellow.it.kr
 HUB_AI_MODE=mock
 GEMINI_API_KEY=
 HUB_EMBED_MODE=e5
@@ -175,7 +188,9 @@ Add-EnvSetting $RuntimeEnv $envMap 'HUB_PUBLIC_DOMAIN' 'yellow.it.kr'
 # runtime env self-heals on the next deploy instead of silently failing every connector OAuth
 # attempt until someone edits the file by hand - same self-healing this already does for
 # DB_PASSWORD/HUB_JWT_SECRET, above.
-Add-EnvSetting $RuntimeEnv $envMap 'HUB_PUBLIC_BASE_URL' "http://$([string]$envMap['HUB_PUBLIC_DOMAIN']):$([string]$envMap['HUB_HOST_PORT'])"
+Set-EnvSetting $RuntimeEnv $envMap 'HUB_PUBLIC_BASE_URL' "https://$([string]$envMap['HUB_PUBLIC_DOMAIN'])"
+Set-EnvSetting $RuntimeEnv $envMap 'HUB_COOKIE_SECURE' 'true'
+Set-EnvSetting $RuntimeEnv $envMap 'HUB_ENFORCE_SECURE_CONFIG' 'true'
 
 $missingDbPassword = -not $envMap.ContainsKey('DB_PASSWORD') -or [string]::IsNullOrWhiteSpace([string]$envMap['DB_PASSWORD'])
 if ($missingDbPassword -and $dbHasExistingData) {
