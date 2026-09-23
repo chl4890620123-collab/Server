@@ -6,3 +6,4 @@ Requested: 2026-09-23
 
 Retry after public HTTPS verification fix: a52dd0ec16a1736958219754b3f57dacde7d7637
 Deploy tested Hub revision: 91d2f7850baf757fdd4ad98c8abba81b8439b998
+Deploy Google verification revision: 78b1c723711ed22d1b6d18a410202c4893abebab
