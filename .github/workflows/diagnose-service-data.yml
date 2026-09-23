@@ -1,9 +1,9 @@
 name: diagnose-service-data
 
-# Read-only SSH diagnostic: for each of aitm/maple/restok, lists its containers and the real host
-# path each bind-mounted data volume points at (docker inspect Mounts), plus that path's on-disk
-# size and which drive it lives on. Nothing here stops, removes, or modifies anything - it exists
-# to answer "where does this service's data actually live" before any decommission decision.
+# Read-only SSH diagnostic: for each of aitm/maple/restok, lists any docker images still tagged
+# for that service, and the size of its D:\server-data directories (runtime data, backups,
+# deployed source checkouts). Nothing here stops, removes, or modifies anything - it exists to
+# answer "what exactly is here and how big is it" before any decommission decision.
 # Manual trigger only.
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ jobs:
       SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
       SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
     steps:
-      - name: Read-only container/mount/data-size diagnostics over SSH
+      - name: Read-only image/data-size diagnostics over SSH
         shell: bash
         run: |
           set -euo pipefail
@@ -51,44 +51,22 @@ jobs:
           cat > "$remote_script" <<'PWSH'
           $ErrorActionPreference = 'Continue'
 
-          foreach ($svc in @('aitm','maple','restok')) {
-            [Console]::Out.WriteLine("=== $svc containers ===")
-            docker ps -a --filter "name=$svc" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" 2>&1 | Write-Output
+          [Console]::Out.WriteLine('=== docker images matching aitm/maple/restok ===')
+          docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.ID}}" 2>&1 |
+            Select-String -Pattern 'aitm|maple|restok' -CaseSensitive:$false | Write-Output
 
-            $names = docker ps -a --filter "name=$svc" --format "{{.Names}}" 2>&1
-            foreach ($name in $names) {
-              if ([string]::IsNullOrWhiteSpace($name)) { continue }
-              [Console]::Out.WriteLine("--- mounts for $name ---")
-              docker inspect --format '{{range .Mounts}}{{.Type}} {{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' $name 2>&1 | Write-Output
-            }
-          }
+          [Console]::Out.WriteLine('=== docker networks matching aitm/maple/restok ===')
+          docker network ls --format "{{.Name}}" 2>&1 | Select-String -Pattern 'aitm|maple|restok' | Write-Output
 
-          [Console]::Out.WriteLine('=== D:\server-data tree (top 2 levels) ===')
-          if (Test-Path 'D:\server-data') {
-            Get-ChildItem 'D:\server-data' -Directory -Recurse -Depth 1 -ErrorAction SilentlyContinue |
-              Select-Object FullName | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
-          } else {
-            [Console]::Out.WriteLine('D:\server-data does not exist')
-          }
-
-          [Console]::Out.WriteLine('=== bind-mount source sizes (from mounts above, deduped) ===')
-          $sources = @()
-          foreach ($svc in @('aitm','maple','restok')) {
-            $names = docker ps -a --filter "name=$svc" --format "{{.Names}}" 2>&1
-            foreach ($name in $names) {
-              if ([string]::IsNullOrWhiteSpace($name)) { continue }
-              $mounts = docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' $name 2>&1
-              foreach ($m in $mounts) { if (-not [string]::IsNullOrWhiteSpace($m)) { $sources += $m.Trim() } }
-            }
-          }
-          $sources = $sources | Sort-Object -Unique
-          foreach ($src in $sources) {
-            if (Test-Path $src) {
-              $sizeBytes = (Get-ChildItem $src -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
-              $sizeGB = [math]::Round(($sizeBytes / 1GB), 2)
-              [Console]::Out.WriteLine("$src => ${sizeGB} GB")
+          foreach ($dir in @('D:\server-data\aitm','D:\server-data\maple','D:\server-data\restok','D:\server-data\sources\aitm','D:\server-data\sources\maple','D:\server-data\sources\restok')) {
+            [Console]::Out.WriteLine("=== $dir ===")
+            if (Test-Path $dir) {
+              $sizeBytes = (Get-ChildItem $dir -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+              $sizeGB = [math]::Round((($sizeBytes ?? 0) / 1GB), 2)
+              [Console]::Out.WriteLine("size: ${sizeGB} GB")
+              Get-ChildItem $dir -ErrorAction SilentlyContinue | Select-Object Name,LastWriteTime | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
             } else {
-              [Console]::Out.WriteLine("$src => PATH NOT FOUND")
+              [Console]::Out.WriteLine('does not exist')
             }
           }
           PWSH
