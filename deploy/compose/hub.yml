@@ -69,7 +69,7 @@ services:
       ai:
         condition: service_healthy
     environment:
-      SPRING_PROFILES_ACTIVE: postgresql
+      SPRING_PROFILES_ACTIVE: postgresql,prod
       HUB_BIND_ADDRESS: 0.0.0.0
       HUB_PORT: 8080
       DB_URL: jdbc:postgresql://hub-db:5432/${DB_NAME:-hub}
@@ -78,8 +78,8 @@ services:
       HUB_AI_BASE_URL: http://ai:8000
       HUB_STORAGE_ROOT: /app/data/storage
       HUB_JWT_SECRET: ${HUB_JWT_SECRET:?HUB_JWT_SECRET is required}
-      HUB_COOKIE_SECURE: ${HUB_COOKIE_SECURE:-false}
-      HUB_ENFORCE_SECURE_CONFIG: ${HUB_ENFORCE_SECURE_CONFIG:-false}
+      HUB_COOKIE_SECURE: ${HUB_COOKIE_SECURE:-true}
+      HUB_ENFORCE_SECURE_CONFIG: ${HUB_ENFORCE_SECURE_CONFIG:-true}
       HUB_ADMIN_SETUP_KEY: ${HUB_ADMIN_SETUP_KEY:-}
       HUB_STT_PII_HASH_KEY: ${HUB_STT_PII_HASH_KEY:-}
       HUB_BOOTSTRAP_ADMIN_LOGIN_ID: ${HUB_BOOTSTRAP_ADMIN_LOGIN_ID:-admin}
