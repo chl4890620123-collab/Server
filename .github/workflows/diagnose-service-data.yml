@@ -1,0 +1,99 @@
+name: diagnose-service-data
+
+# Read-only SSH diagnostic: for each of aitm/maple/restok, lists its containers and the real host
+# path each bind-mounted data volume points at (docker inspect Mounts), plus that path's on-disk
+# size and which drive it lives on. Nothing here stops, removes, or modifies anything - it exists
+# to answer "where does this service's data actually live" before any decommission decision.
+# Manual trigger only.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_PORT: ${{ secrets.SERVER_PORT }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
+    steps:
+      - name: Read-only container/mount/data-size diagnostics over SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$SERVER_HOST" ] || [ -z "$SERVER_USER" ] || { [ -z "$SERVER_SSH_KEY" ] && [ -z "$SERVER_PASSWORD" ]; }; then
+            echo 'Server SSH secrets are not configured in the Server repository.' >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+          port="${SERVER_PORT:-22}"
+          key_args=()
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/server_deploy_key"
+            chmod 600 "$HOME/.ssh/server_deploy_key"
+            key_args=(-i "$HOME/.ssh/server_deploy_key")
+          fi
+          if [ -n "$SERVER_PASSWORD" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SERVER_PASSWORD"
+            auth=(sshpass -e ssh "${key_args[@]}")
+          else
+            auth=(ssh "${key_args[@]}")
+          fi
+          ssh_options=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o ServerAliveInterval=10 -o ServerAliveCountMax=60 -o TCPKeepAlive=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+
+          remote_script="$RUNNER_TEMP/diagnose-service-data.ps1"
+          cat > "$remote_script" <<'PWSH'
+          $ErrorActionPreference = 'Continue'
+
+          foreach ($svc in @('aitm','maple','restok')) {
+            [Console]::Out.WriteLine("=== $svc containers ===")
+            docker ps -a --filter "name=$svc" --format "table {{.Names}}\t{{.Status}}\t{{.Image}}" 2>&1 | Write-Output
+
+            $names = docker ps -a --filter "name=$svc" --format "{{.Names}}" 2>&1
+            foreach ($name in $names) {
+              if ([string]::IsNullOrWhiteSpace($name)) { continue }
+              [Console]::Out.WriteLine("--- mounts for $name ---")
+              docker inspect --format '{{range .Mounts}}{{.Type}} {{.Source}} -> {{.Destination}}{{"\n"}}{{end}}' $name 2>&1 | Write-Output
+            }
+          }
+
+          [Console]::Out.WriteLine('=== D:\server-data tree (top 2 levels) ===')
+          if (Test-Path 'D:\server-data') {
+            Get-ChildItem 'D:\server-data' -Directory -Recurse -Depth 1 -ErrorAction SilentlyContinue |
+              Select-Object FullName | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+          } else {
+            [Console]::Out.WriteLine('D:\server-data does not exist')
+          }
+
+          [Console]::Out.WriteLine('=== bind-mount source sizes (from mounts above, deduped) ===')
+          $sources = @()
+          foreach ($svc in @('aitm','maple','restok')) {
+            $names = docker ps -a --filter "name=$svc" --format "{{.Names}}" 2>&1
+            foreach ($name in $names) {
+              if ([string]::IsNullOrWhiteSpace($name)) { continue }
+              $mounts = docker inspect --format '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}' $name 2>&1
+              foreach ($m in $mounts) { if (-not [string]::IsNullOrWhiteSpace($m)) { $sources += $m.Trim() } }
+            }
+          }
+          $sources = $sources | Sort-Object -Unique
+          foreach ($src in $sources) {
+            if (Test-Path $src) {
+              $sizeBytes = (Get-ChildItem $src -Recurse -Force -ErrorAction SilentlyContinue | Measure-Object -Property Length -Sum).Sum
+              $sizeGB = [math]::Round(($sizeBytes / 1GB), 2)
+              [Console]::Out.WriteLine("$src => ${sizeGB} GB")
+            } else {
+              [Console]::Out.WriteLine("$src => PATH NOT FOUND")
+            }
+          }
+          PWSH
+
+          wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
+          encoded_wrapper="$(printf '%s' "$wrapper" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
+          remote_command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded_wrapper"
+          timeout 3m "${auth[@]}" -p "$port" "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "$remote_command" < "$remote_script"
