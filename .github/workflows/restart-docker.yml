@@ -1,0 +1,131 @@
+name: Restart Docker Desktop and production containers
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.ops-trigger/restart-docker.txt']
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_PORT: ${{ secrets.SERVER_PORT }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
+    steps:
+      - name: Restart Docker Desktop, restore production containers and check health
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$SERVER_HOST" ] || [ -z "$SERVER_USER" ] || { [ -z "$SERVER_SSH_KEY" ] && [ -z "$SERVER_PASSWORD" ]; }; then
+            echo 'Server SSH secrets are not configured.' >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+          key_args=()
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/server_deploy_key"
+            chmod 600 "$HOME/.ssh/server_deploy_key"
+            key_args=(-i "$HOME/.ssh/server_deploy_key")
+          fi
+          if [ -n "$SERVER_PASSWORD" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SERVER_PASSWORD"
+            auth=(sshpass -e ssh "${key_args[@]}")
+          else
+            auth=(ssh "${key_args[@]}")
+          fi
+          ssh_options=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o ServerAliveInterval=10 -o ServerAliveCountMax=40 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+          cat > "$RUNNER_TEMP/restart-docker.ps1" <<'PWSH'
+          $ErrorActionPreference = 'Continue'
+          function Say([string]$message) { [Console]::Out.WriteLine($message) }
+          function Fail([string]$message) { Say $message; [Environment]::Exit(1) }
+          foreach ($path in @('D:\server-data\hub\postgres', 'D:\server-data\hub\storage')) {
+              if (-not (Test-Path -LiteralPath $path -PathType Container)) { Fail "Existing data path missing: $path" }
+          }
+          Say 'Starting Docker Desktop to inventory production containers'
+          docker desktop start --timeout 120
+          if ($LASTEXITCODE -ne 0) { Fail 'Docker Desktop did not start.' }
+          $ready = $false
+          for ($i = 0; $i -lt 24; $i++) {
+              docker info --format '{{.ServerVersion}}' 2>$null | Out-Null
+              if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+              Start-Sleep -Seconds 5
+          }
+          if (-not $ready) { Fail 'Docker Engine unavailable after initial start.' }
+          $allBefore = @(docker ps -a --format '{{.Names}}' | Where-Object { $_ })
+          $runningBefore = @(docker ps --format '{{.Names}}' | Where-Object { $_ })
+          if ($LASTEXITCODE -ne 0) { Fail 'Container inventory failed.' }
+          Say ('Existing containers: ' + ($allBefore -join ', '))
+          Say ('Running before full restart: ' + ($runningBefore -join ', '))
+          Say 'Stopping and restarting Docker Desktop; retaining every container, volume and bind mount'
+          docker desktop restart
+          if ($LASTEXITCODE -ne 0) { Fail 'Docker Desktop restart failed.' }
+          $ready = $false
+          for ($i = 0; $i -lt 30; $i++) {
+              docker info --format '{{.ServerVersion}}' 2>$null | Out-Null
+              if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+              Start-Sleep -Seconds 5
+          }
+          if (-not $ready) { Fail 'Docker Engine unavailable after full restart.' }
+          # Docker restart policies restore other services. Also restore containers which were
+          # actually running before the restart, without starting unrelated intentionally stopped ones.
+          foreach ($name in $runningBefore) {
+              $state = docker inspect --format '{{.State.Running}}' $name 2>$null
+              if ($LASTEXITCODE -ne 0) { Fail "Previously running container missing: $name" }
+              if ($state.Trim() -ne 'true') {
+                  docker start $name | Out-Null
+                  if ($LASTEXITCODE -ne 0) { Fail "Failed to restore previously running container: $name" }
+              }
+          }
+          # Hub was intended to be online before the engine exited. Start existing containers
+          # in dependency order, without recreating them or touching persisted data paths.
+          foreach ($name in @('hub-db', 'hub-ai', 'hub-backend', 'hub-caddy')) {
+              if ($name -notin $allBefore) { Fail "Existing Hub container missing: $name" }
+              $state = docker inspect --format '{{.State.Running}}' $name 2>$null
+              if ($LASTEXITCODE -ne 0) { Fail "Cannot inspect Hub container: $name" }
+              if ($state.Trim() -ne 'true') {
+                  docker start $name | Out-Null
+                  if ($LASTEXITCODE -ne 0) { Fail "Failed to start Hub container: $name" }
+              }
+          }
+          if ('saver-caddy-1' -in $allBefore) {
+              $state = docker inspect --format '{{.State.Running}}' saver-caddy-1 2>$null
+              if ($state.Trim() -ne 'true') {
+                  docker start saver-caddy-1 | Out-Null
+                  if ($LASTEXITCODE -ne 0) { Fail 'Failed to start shared Caddy.' }
+              }
+          }
+          for ($i = 0; $i -lt 30; $i++) {
+              $dbHealth = docker inspect --format '{{.State.Health.Status}}' hub-db 2>$null
+              $aiHealth = docker inspect --format '{{.State.Health.Status}}' hub-ai 2>$null
+              if ($dbHealth.Trim() -eq 'healthy' -and $aiHealth.Trim() -eq 'healthy') { break }
+              Start-Sleep -Seconds 5
+          }
+          Say ('Hub DB health: ' + $dbHealth.Trim() + '; AI health: ' + $aiHealth.Trim())
+          Say 'Container status after restart:'
+          docker ps -a --format '{{.Names}} {{.Status}}'
+          Say 'Container resource snapshot:'
+          docker stats --no-stream --format '{{.Name}} CPU={{.CPUPerc}} RAM={{.MemUsage}}'
+          Say 'Host free memory GB:'
+          Get-CimInstance Win32_OperatingSystem | ForEach-Object { Say ([math]::Round($_.FreePhysicalMemory/1MB,1).ToString()) }
+          $localHealth = ''
+          for ($i = 0; $i -lt 24; $i++) {
+              $localHealth = curl.exe --silent --max-time 6 --output NUL --write-out '%{http_code}' http://127.0.0.1:9070/actuator/health
+              if ($localHealth -eq '200') { break }
+              Start-Sleep -Seconds 5
+          }
+          Say ('Local Hub health HTTP: ' + $localHealth)
+          if ($localHealth -ne '200') { Fail 'Hub health check failed after Docker restart.' }
+          Say 'Docker restart and local Hub health succeeded; no volume was deleted.'
+          PWSH
+          wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
+          encoded_wrapper="$(printf '%s' "$wrapper" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
+          timeout 9m "${auth[@]}" -p "${SERVER_PORT:-22}" "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded_wrapper" < "$RUNNER_TEMP/restart-docker.ps1"
