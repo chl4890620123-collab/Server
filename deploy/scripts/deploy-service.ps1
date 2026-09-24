@@ -175,6 +175,8 @@ Say "[$Service] source SHA: $sourceSha"
 Say "[$Service] verified remote main SHA: $remoteSha"
 
 $previousDockerConfig = $env:DOCKER_CONFIG
+$previousDockerHost = $env:DOCKER_HOST
+$previousDockerContext = $env:DOCKER_CONTEXT
 $previousDockerApiVersion = $env:DOCKER_API_VERSION
 $dockerConfigRoot = Join-Path $env:TEMP ("server-docker-" + [guid]::NewGuid().ToString('N'))
 $dockerPluginRoot = Join-Path $dockerConfigRoot 'cli-plugins'
@@ -213,8 +215,12 @@ if ($composePlugin) {
     Say "[$Service] warning: docker-compose.exe was not found under any known Docker Desktop path or $env:ProgramFiles - 'docker compose' calls below will fail with 'unknown flag'"
 }
 $env:DOCKER_CONFIG = $dockerConfigRoot
+# The isolated config has no Docker Desktop contexts. Point docker and its Compose plugin at
+# the verified Linux engine pipe so they do not fall back to the unavailable docker_engine pipe.
+$env:DOCKER_HOST = 'npipe:////./pipe/dockerDesktopLinuxEngine'
+Remove-Item Env:DOCKER_CONTEXT -ErrorAction SilentlyContinue
 $env:DOCKER_API_VERSION = '1.44'
-Say "[$Service] using isolated Docker CLI config and compatible API version"
+Say "[$Service] using isolated Docker CLI config, Linux engine pipe and compatible API version"
 try {
     Wait-DockerEngine -Name $Service
     switch ($Service) {
@@ -280,6 +286,8 @@ try {
     }
 } finally {
     if ([string]::IsNullOrWhiteSpace($previousDockerConfig)) { Remove-Item Env:DOCKER_CONFIG -ErrorAction SilentlyContinue } else { $env:DOCKER_CONFIG = $previousDockerConfig }
+    if ([string]::IsNullOrWhiteSpace($previousDockerHost)) { Remove-Item Env:DOCKER_HOST -ErrorAction SilentlyContinue } else { $env:DOCKER_HOST = $previousDockerHost }
+    if ([string]::IsNullOrWhiteSpace($previousDockerContext)) { Remove-Item Env:DOCKER_CONTEXT -ErrorAction SilentlyContinue } else { $env:DOCKER_CONTEXT = $previousDockerContext }
     if ([string]::IsNullOrWhiteSpace($previousDockerApiVersion)) { Remove-Item Env:DOCKER_API_VERSION -ErrorAction SilentlyContinue } else { $env:DOCKER_API_VERSION = $previousDockerApiVersion }
     Remove-Item -Recurse -Force $dockerConfigRoot -ErrorAction SilentlyContinue
 }
