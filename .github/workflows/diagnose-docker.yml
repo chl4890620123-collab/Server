@@ -88,7 +88,7 @@ jobs:
           }
 
           [Console]::Out.WriteLine('--- Docker Desktop Linux host drive mount ---')
-          wsl -d docker-desktop -- sh -c 'for p in /run/desktop/mnt/host /run/desktop/mnt/host/d /run/desktop/mnt/host/d/server-data; do ls -ld "$p" 2>&1; done; mount | grep -E "(/run/desktop/mnt/host|/mnt/host/d)" | head -n 8' 2>&1 | Write-Output
+          wsl -d docker-desktop -- ls -ld /run/desktop/mnt/host /run/desktop/mnt/host/d /run/desktop/mnt/host/d/server-data 2>&1 | Write-Output
           PWSH
 
           wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
