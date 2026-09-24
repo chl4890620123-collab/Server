@@ -174,6 +174,15 @@ if ($sourceSha -ne $remoteSha) { Fail "[$Service] checkout mismatch: local=$sour
 Say "[$Service] source SHA: $sourceSha"
 Say "[$Service] verified remote main SHA: $remoteSha"
 
+# Docker Desktop can stop after a separate recovery SSH session exits. Start it within this
+# deployment session before isolating DOCKER_CONFIG (which does not include the desktop plugin).
+$initialEngine = Test-DockerEngine
+if (-not $initialEngine.Ready) {
+    Say "[$Service] Docker Linux Engine is stopped; starting Docker Desktop in this session"
+    docker desktop start --timeout 120
+    if ($LASTEXITCODE -ne 0) { Fail "[$Service] Docker Desktop start failed" }
+}
+
 $previousDockerConfig = $env:DOCKER_CONFIG
 $previousDockerHost = $env:DOCKER_HOST
 $previousDockerContext = $env:DOCKER_CONTEXT
