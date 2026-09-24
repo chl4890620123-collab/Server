@@ -1,0 +1,82 @@
+name: Inspect Docker Desktop login session
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.ops-trigger/inspect-desktop-login.txt']
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_PORT: ${{ secrets.SERVER_PORT }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
+    steps:
+      - name: Inspect Windows interactive session and available RAM
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$SERVER_HOST" ] || [ -z "$SERVER_USER" ] || { [ -z "$SERVER_SSH_KEY" ] && [ -z "$SERVER_PASSWORD" ]; }; then
+            echo 'Server SSH secrets are not configured.' >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+          key_args=()
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/server_deploy_key"
+            chmod 600 "$HOME/.ssh/server_deploy_key"
+            key_args=(-i "$HOME/.ssh/server_deploy_key")
+          fi
+          if [ -n "$SERVER_PASSWORD" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SERVER_PASSWORD"
+            auth=(sshpass -e ssh "${key_args[@]}")
+          else
+            auth=(ssh "${key_args[@]}")
+          fi
+          ssh_options=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o ServerAliveInterval=10 -o ServerAliveCountMax=40 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+          cat > "$RUNNER_TEMP/inspect-desktop-login.ps1" <<'PWSH'
+          $ErrorActionPreference = 'Continue'
+          function Say([string]$message) { [Console]::Out.WriteLine($message) }
+          $interactive = (Get-CimInstance Win32_ComputerSystem).UserName
+          Say ('Interactive user present: ' + [bool]$interactive)
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          if ($interactive) {
+              try {
+                  $loggedOnSid = (New-Object Security.Principal.NTAccount($interactive)).Translate([Security.Principal.SecurityIdentifier]).Value
+                  Say ('SSH user matches interactive user: ' + ($identity.User.Value -eq $loggedOnSid))
+              } catch { Say 'Could not compare interactive identity' }
+          }
+          Say 'Explorer session IDs:'
+          Get-Process explorer -ErrorAction SilentlyContinue | Select-Object -ExpandProperty SessionId | Write-Output
+          Say 'Task Scheduler service:'
+          Get-Service Schedule | Select-Object -ExpandProperty Status | Write-Output
+          Say 'Docker Desktop running processes:'
+          Get-Process | Where-Object { $_.Name -match 'docker|com.docker|vmmem' } |
+              Select-Object Name,Id,SessionId,@{N='RAM_MB';E={[math]::Round($_.WorkingSet64/1MB)}} |
+              Format-Table -AutoSize | Out-String -Width 160 | Write-Output
+          Say 'Docker command executable:'
+          (Get-Command docker.exe -ErrorAction SilentlyContinue).Source | Write-Output
+          Say 'Physical RAM free GB and total GB:'
+          Get-CimInstance Win32_OperatingSystem | Select-Object @{N='Free';E={[math]::Round($_.FreePhysicalMemory/1MB,1)}},@{N='Total';E={[math]::Round($_.TotalVisibleMemorySize/1MB,1)}} | Format-Table -AutoSize | Out-String -Width 160 | Write-Output
+          Say 'Recent resource exhaustion/crash events:'
+          foreach ($logName in @('System','Application')) {
+              try {
+                  Get-WinEvent -FilterHashtable @{LogName=$logName;StartTime=[datetime]'2026-09-24 20:45:00'} -ErrorAction Stop |
+                      Where-Object { $_.Id -in @(2004,1000,1001,41,7031,7034) -or $_.ProviderName -match 'Resource-Exhaustion|Windows-Subsystem-Linux|Docker' } |
+                      Select-Object -First 25 TimeCreated,ProviderName,Id |
+                      Format-Table -AutoSize | Out-String -Width 160 | Write-Output
+              } catch { Say "$logName event query unavailable" }
+          }
+          PWSH
+          wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
+          encoded_wrapper="$(printf '%s' "$wrapper" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
+          timeout 9m "${auth[@]}" -p "${SERVER_PORT:-22}" "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded_wrapper" < "$RUNNER_TEMP/inspect-desktop-login.ps1"
