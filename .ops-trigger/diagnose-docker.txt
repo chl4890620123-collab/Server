@@ -1,2 +1,3 @@
 Read-only Hub bind mount diagnostic after deployment 35976646306.
 Rerun after fixing diagnostic command quoting: 2026-09-24.
+Check D drive filesystem type.
