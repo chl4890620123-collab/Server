@@ -92,6 +92,24 @@ jobs:
           Get-Item 'D:\\' | Select-Object FullName,Attributes,LinkType,Target | Format-List | Out-String | Write-Output
           Get-Item 'D:\\server-data' | Select-Object FullName,Attributes,LinkType,Target | Format-List | Out-String | Write-Output
 
+          [Console]::Out.WriteLine('--- current CPU, RAM and disk ---')
+          Get-CimInstance Win32_Processor | Select-Object Name,LoadPercentage | Format-Table -AutoSize | Out-String -Width 180 | Write-Output
+          Get-CimInstance Win32_OperatingSystem | Select-Object @{N='FreeGB';E={[math]::Round($_.FreePhysicalMemory/1MB,1)}},@{N='TotalGB';E={[math]::Round($_.TotalVisibleMemorySize/1MB,1)}} | Format-Table -AutoSize | Out-String -Width 180 | Write-Output
+          Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID,@{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}},@{N='TotalGB';E={[math]::Round($_.Size/1GB,1)}} | Format-Table -AutoSize | Out-String -Width 180 | Write-Output
+          Get-Process | Sort-Object WorkingSet64 -Descending | Select-Object -First 12 Name,Id,@{N='RAM_MB';E={[math]::Round($_.WorkingSet64/1MB,0)}} | Format-Table -AutoSize | Out-String -Width 180 | Write-Output
+
+          [Console]::Out.WriteLine('--- Windows resource exhaustion and crash events (local server time) ---')
+          $since = [datetime]'2026-09-24 18:35:00'
+          $until = [datetime]'2026-09-24 19:25:00'
+          foreach ($logName in @('System','Application')) {
+              try {
+                  Get-WinEvent -FilterHashtable @{LogName=$logName;StartTime=$since;EndTime=$until} -ErrorAction Stop |
+                      Where-Object { $_.Id -in @(2004,1000,1001,41,6008,7031,7034) -or $_.ProviderName -match 'Resource-Exhaustion|Windows-Subsystem-Linux|Docker' } |
+                      Select-Object -First 35 TimeCreated,ProviderName,Id,LevelDisplayName |
+                      Format-Table -AutoSize | Out-String -Width 180 | Write-Output
+              } catch { [Console]::Out.WriteLine("$logName event query unavailable: $($_.Exception.Message)") }
+          }
+
           [Console]::Out.WriteLine('--- Docker Desktop Linux host drive mount ---')
           wsl -d docker-desktop -- ls -ld /run/desktop/mnt/host /run/desktop/mnt/host/d /run/desktop/mnt/host/d/server-data 2>&1 | Write-Output
           PWSH
