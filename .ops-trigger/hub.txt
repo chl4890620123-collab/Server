@@ -10,3 +10,5 @@ Deploy Google verification revision: 78b1c723711ed22d1b6d18a410202c4893abebab
 Deploy Gemini quota fallback revision: 77c5056c3117d6cb690b64cd617bf9e780a40505
 
 Retry after Docker Desktop D: bind mount recovery: 2026-09-24T18:40+09:00
+
+Retry after Docker Desktop Linux engine pipe fix: 2026-09-24T18:47+09:00
