@@ -12,3 +12,4 @@ Deploy Gemini quota fallback revision: 77c5056c3117d6cb690b64cd617bf9e780a40505
 Retry after Docker Desktop D: bind mount recovery: 2026-09-24T18:40+09:00
 
 Retry after Docker Desktop Linux engine pipe fix: 2026-09-24T18:47+09:00
+Retry with Docker Desktop startup in deployment session: 2026-09-24T18:52+09:00
