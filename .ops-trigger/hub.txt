@@ -8,3 +8,5 @@ Retry after public HTTPS verification fix: a52dd0ec16a1736958219754b3f57dacde7d7
 Deploy tested Hub revision: 91d2f7850baf757fdd4ad98c8abba81b8439b998
 Deploy Google verification revision: 78b1c723711ed22d1b6d18a410202c4893abebab
 Deploy Gemini quota fallback revision: 77c5056c3117d6cb690b64cd617bf9e780a40505
+
+Retry after Docker Desktop D: bind mount recovery: 2026-09-24T18:40+09:00
