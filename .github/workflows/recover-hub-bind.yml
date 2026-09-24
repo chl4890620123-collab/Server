@@ -1,0 +1,83 @@
+name: Recover Hub Docker bind mount
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.ops-trigger/recover-hub-bind.txt']
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      SERVER_HOST: ${{ secrets.SERVER_HOST }}
+      SERVER_USER: ${{ secrets.SERVER_USER }}
+      SERVER_PORT: ${{ secrets.SERVER_PORT }}
+      SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+      SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
+    steps:
+      - name: Restart Docker Desktop and verify existing D drive bind mount
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$SERVER_HOST" ] || [ -z "$SERVER_USER" ] || { [ -z "$SERVER_SSH_KEY" ] && [ -z "$SERVER_PASSWORD" ]; }; then
+            echo 'Server SSH secrets are not configured.' >&2
+            exit 1
+          fi
+          mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+          key_args=()
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/server_deploy_key"
+            chmod 600 "$HOME/.ssh/server_deploy_key"
+            key_args=(-i "$HOME/.ssh/server_deploy_key")
+          fi
+          if [ -n "$SERVER_PASSWORD" ]; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SERVER_PASSWORD"
+            auth=(sshpass -e ssh "${key_args[@]}")
+          else
+            auth=(ssh "${key_args[@]}")
+          fi
+          ssh_options=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o ServerAliveInterval=10 -o ServerAliveCountMax=40 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+          cat > "$RUNNER_TEMP/recover-hub-bind.ps1" <<'PWSH'
+          $ErrorActionPreference = 'Stop'
+          function Say([string]$message) { [Console]::Out.WriteLine($message) }
+          function Fail([string]$message) { Say $message; [Environment]::Exit(1) }
+          foreach ($path in @('D:\server-data\hub\postgres', 'D:\server-data\hub\storage')) {
+              if (-not (Test-Path -LiteralPath $path -PathType Container)) { Fail "Existing data path missing: $path" }
+          }
+          $running = @(docker ps --format '{{.Names}}')
+          if ($LASTEXITCODE -ne 0) { Fail 'Docker engine unavailable before recovery.' }
+          Say ('Running containers before restart: ' + ($running -join ', '))
+          docker desktop restart
+          if ($LASTEXITCODE -ne 0) { Fail 'Docker Desktop restart failed.' }
+          $ready = $false
+          for ($i = 0; $i -lt 30; $i++) {
+              try {
+                  docker info --format '{{.ServerVersion}}' 2>$null | Out-Null
+                  if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+              } catch {}
+              Start-Sleep -Seconds 5
+          }
+          if (-not $ready) { Fail 'Docker engine did not recover after restart.' }
+          foreach ($name in $running) {
+              if (-not $name) { continue }
+              $state = docker inspect --format '{{.State.Running}}' $name 2>$null
+              if ($LASTEXITCODE -ne 0) { Fail "Previously running container disappeared: $name" }
+              if ($state.Trim() -ne 'true') {
+                  docker start $name | Out-Null
+                  if ($LASTEXITCODE -ne 0) { Fail "Failed to restore previously running container: $name" }
+              }
+          }
+          Say ('Restored running containers: ' + ((docker ps --format '{{.Names}}') -join ', '))
+          docker run --rm --pull never --mount 'type=bind,source=D:/server-data/hub/postgres,target=/mnt/qa,readonly' --entrypoint ls pgvector/pgvector:pg16 -ld /mnt/qa
+          if ($LASTEXITCODE -ne 0) { Fail 'D drive read-only bind mount is still unavailable.' }
+          Say 'D drive read-only bind mount succeeded; existing Postgres data was not modified.'
+          PWSH
+          wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
+          encoded_wrapper="$(printf '%s' "$wrapper" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
+          timeout 9m "${auth[@]}" -p "${SERVER_PORT:-22}" "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded_wrapper" < "$RUNNER_TEMP/recover-hub-bind.ps1"
