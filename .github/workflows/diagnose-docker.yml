@@ -87,6 +87,11 @@ jobs:
               else { [Console]::Out.WriteLine("$path missing") }
           }
 
+          [Console]::Out.WriteLine('--- D drive filesystem and mount details ---')
+          Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='D:'" | Select-Object DeviceID,DriveType,FileSystem,VolumeName | Format-List | Out-String | Write-Output
+          Get-Item 'D:\\' | Select-Object FullName,Attributes,LinkType,Target | Format-List | Out-String | Write-Output
+          Get-Item 'D:\\server-data' | Select-Object FullName,Attributes,LinkType,Target | Format-List | Out-String | Write-Output
+
           [Console]::Out.WriteLine('--- Docker Desktop Linux host drive mount ---')
           wsl -d docker-desktop -- ls -ld /run/desktop/mnt/host /run/desktop/mnt/host/d /run/desktop/mnt/host/d/server-data 2>&1 | Write-Output
           PWSH
