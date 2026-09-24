@@ -3,9 +3,12 @@ name: diagnose-docker
 # Read-only SSH diagnostic for the mini PC's Docker state. Nothing here changes anything on the
 # box - it only reports service/process state and docker's own version handshake - so it is safe
 # to run whenever a deploy fails with a Docker-connectivity error to see what actually happened
-# before deciding on a fix. Manual trigger only.
+# before deciding on a fix. A dedicated trigger file can run this read-only probe from GitHub.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.ops-trigger/diagnose-docker.txt']
 
 permissions:
   contents: read
@@ -76,6 +79,16 @@ jobs:
           [Console]::Out.WriteLine('--- Docker Desktop process / install check ---')
           Get-Process -Name 'Docker Desktop' -ErrorAction SilentlyContinue | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
           Test-Path 'C:\Program Files\Docker\Docker\Docker Desktop.exe' | Write-Output
+
+          [Console]::Out.WriteLine('--- Hub bind source paths on Windows ---')
+          foreach ($path in @('D:\server-data\hub\postgres', 'D:\server-data\hub\storage')) {
+              $item = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+              if ($item) { [Console]::Out.WriteLine("$path exists type=$($item.GetType().Name) attributes=$($item.Attributes)") }
+              else { [Console]::Out.WriteLine("$path missing") }
+          }
+
+          [Console]::Out.WriteLine('--- Docker Desktop Linux host drive mount ---')
+          wsl -d docker-desktop -- sh -c 'for p in /run/desktop/mnt/host /run/desktop/mnt/host/d /run/desktop/mnt/host/d/server-data; do ls -ld "$p" 2>&1; done; mount | grep -E "(/run/desktop/mnt/host|/mnt/host/d)" | head -n 8' 2>&1 | Write-Output
           PWSH
 
           wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
