@@ -1,0 +1,1 @@
+One-time recovery after Hub deploy 35976646306 failed to bind D: drive. Preserve Windows data, restore previously running containers, verify read-only bind mount.
