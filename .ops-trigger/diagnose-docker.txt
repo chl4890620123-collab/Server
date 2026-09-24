@@ -2,3 +2,4 @@ Read-only Hub bind mount diagnostic after deployment 35976646306.
 Rerun after fixing diagnostic command quoting: 2026-09-24.
 Check D drive filesystem type.
 Check Docker Desktop engine after deploy 35983250056: 2026-09-24.
+Read-only post-deployment Docker check after 35983755674: 2026-09-24T19:17+09:00
