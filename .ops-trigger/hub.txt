@@ -16,3 +16,6 @@ Retry with Docker Desktop startup in deployment session: 2026-09-24T18:52+09:00
 
 Deploy latest reviewed Hub main: 6c5062dbc422b91f09f218c7bb0b3e9363c2fa3f
 Requested: 2026-09-25
+
+Deploy latest Hub main after lifecycle/sync audit: af8e2c7a40219563ba3d480fa5396fc7b7df29af
+Requested: 2026-09-25T21:11+09:00
