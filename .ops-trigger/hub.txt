@@ -31,3 +31,6 @@ Requested: 2026-09-26T11:01+09:00
 
 Deploy Hub main after PR #24 full validation: 582d65f52b505db9ed36c2f5690b4d5667279371
 Requested: 2026-09-26T14:55+09:00
+
+Deploy latest Hub main after PR #26: 95e29e362fce6a944a75e1de0560690948b15450
+Requested: 2026-09-26T17:58+09:00
