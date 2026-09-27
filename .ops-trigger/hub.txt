@@ -52,3 +52,6 @@ Requested: 2026-09-28
 
 Redeploy Hub after Flyway V25 collision fix: 534d11e611f2bd0cbb642253929c39238b243db5
 Requested: 2026-09-28
+
+Deploy Hub after production-safe Flyway renumbering: fcc1b1160c07cea00e8da2aaa3adfcc6f4184cc7
+Requested: 2026-09-28
