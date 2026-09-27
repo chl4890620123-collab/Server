@@ -63,6 +63,17 @@ jobs:
           [Console]::Out.WriteLine('--- hub-db last 100 log lines ---')
           docker logs --tail 100 hub-db 2>&1 | Write-Output
 
+          [Console]::Out.WriteLine('--- Flyway schema history (read-only) ---')
+          $dbUser = [string](docker exec hub-db printenv POSTGRES_USER)
+          $dbName = [string](docker exec hub-db printenv POSTGRES_DB)
+          $dbUser = $dbUser.Trim()
+          $dbName = $dbName.Trim()
+          if ($dbUser -and $dbName) {
+              docker exec hub-db psql -U $dbUser -d $dbName -P pager=off -c 'SELECT installed_rank, version, description, script, checksum, success FROM flyway_schema_history ORDER BY installed_rank;' 2>&1 | Write-Output
+          } else {
+              [Console]::Out.WriteLine('Could not resolve POSTGRES_USER/POSTGRES_DB for read-only Flyway history query.')
+          }
+
           [Console]::Out.WriteLine('--- disk space ---')
           Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID,@{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}},@{N='SizeGB';E={[math]::Round($_.Size/1GB,1)}} | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
 
