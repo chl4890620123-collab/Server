@@ -1,2 +1,5 @@
 Read-only Hub backend/db diagnostics after failed deployment.
 Requested: 2026-09-28
+
+Re-check after failed redeploy 36357774671.
+Requested: 2026-09-28T08:32+09:00
