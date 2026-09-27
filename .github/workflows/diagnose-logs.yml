@@ -4,6 +4,10 @@ name: diagnose-logs
 # state. Nothing here changes anything on the box. Manual trigger only.
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.ops-trigger/diagnose-logs.txt'
 
 permissions:
   contents: read
