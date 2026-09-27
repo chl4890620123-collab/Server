@@ -207,6 +207,15 @@ if (-not $envMap.ContainsKey('HUB_STT_PII_HASH_KEY') -or [string]::IsNullOrWhite
     Add-EnvSetting $RuntimeEnv $envMap 'HUB_STT_PII_HASH_KEY' (New-SecretValue)
 }
 
+# The filming accounts use strong random server-local passwords. Values are never committed or
+# printed; Add-EnvSetting keeps existing values stable across deploys so recordings can log in
+# repeatedly. Setting HUB_DEMO_MODE=false manually in the server .env disables seeding.
+Add-EnvSetting $RuntimeEnv $envMap 'HUB_DEMO_MODE' 'true'
+Add-EnvSetting $RuntimeEnv $envMap 'HUB_DEMO_ADMIN_LOGIN_ID' 'video-admin'
+Add-EnvSetting $RuntimeEnv $envMap 'HUB_DEMO_ADMIN_PASSWORD' ((New-SecretValue) + 'A1')
+Add-EnvSetting $RuntimeEnv $envMap 'HUB_DEMO_MEMBER_LOGIN_ID' 'video-member'
+Add-EnvSetting $RuntimeEnv $envMap 'HUB_DEMO_MEMBER_PASSWORD' ((New-SecretValue) + 'B2')
+
 # ai-service crashes on startup (RuntimeError, not a slow failure) when HUB_AI_MODE=gemini has no
 # GEMINI_API_KEY - and backend's `depends_on: ai: condition: service_healthy` means it would then
 # never start at all. Force mock mode until a real key is present so the stack can actually come
