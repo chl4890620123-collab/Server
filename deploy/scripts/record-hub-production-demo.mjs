@@ -66,7 +66,7 @@ async function settle(page, ms = 2200) {
 
 async function selectDemoProject(page) {
   if (await page.getByText(projectName, { exact: true }).count()) return;
-  const trigger = page.locator('header button').filter({ hasText: /프로젝트 선택|프로젝트/ }).first();
+  const trigger = page.locator('header button:has(svg.lucide-chevron-down)').first();
   if (!(await trigger.count())) throw new Error('Project selector was not found.');
   await trigger.click();
   await sleep(650);
@@ -184,7 +184,7 @@ async function adminCollaboration(page, path) {
   }
 
   if (path === '/review') {
-    const candidate = page.getByText('[촬영] 회의 후 베타 일정 공지', { exact: true }).first();
+    const candidate = page.getByDisplayValue('[촬영] 회의 후 베타 일정 공지').first();
     if (await candidate.count()) {
       const card = candidate.locator('xpath=ancestor::div[.//button[normalize-space(.)="확정"]][1]');
       await selectOptionContaining(page, card, '박준호');
