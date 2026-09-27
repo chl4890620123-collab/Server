@@ -1,0 +1,154 @@
+name: Record real Hub production demo
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.ops-trigger/hub-video.txt'
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Check out Server
+        uses: actions/checkout@v4
+
+      - name: Reset Hub demo seed and load filming credentials
+        shell: bash
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_PORT: ${{ secrets.SERVER_PORT }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_PASSWORD: ${{ secrets.SERVER_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "$SERVER_HOST" ] || [ -z "$SERVER_USER" ] || { [ -z "$SERVER_SSH_KEY" ] && [ -z "$SERVER_PASSWORD" ]; }; then
+            echo 'Server SSH secrets are not configured.' >&2
+            exit 1
+          fi
+
+          mkdir -p "$HOME/.ssh"
+          chmod 700 "$HOME/.ssh"
+          port="${SERVER_PORT:-22}"
+          key_args=()
+          if [ -n "$SERVER_SSH_KEY" ]; then
+            printf '%s\n' "$SERVER_SSH_KEY" > "$HOME/.ssh/server_demo_key"
+            chmod 600 "$HOME/.ssh/server_demo_key"
+            key_args=(-i "$HOME/.ssh/server_demo_key")
+          fi
+          if [ -n "$SERVER_PASSWORD" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq sshpass
+            export SSHPASS="$SERVER_PASSWORD"
+            auth=(sshpass -e ssh "${key_args[@]}")
+          else
+            auth=(ssh "${key_args[@]}")
+          fi
+          ssh_options=(-o BatchMode=no -o NumberOfPasswordPrompts=1 -o ConnectTimeout=30 -o ServerAliveInterval=10 -o ServerAliveCountMax=30 -o TCPKeepAlive=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null)
+
+          remote_script="$RUNNER_TEMP/hub-demo-credentials.ps1"
+          cat > "$remote_script" <<'PWSH'
+          $ErrorActionPreference = 'Stop'
+          $root = if ($env:HUB_DEPLOY_DATA_ROOT) { $env:HUB_DEPLOY_DATA_ROOT } else { 'D:\server-data\hub' }
+          $envPath = Join-Path (Join-Path $root 'runtime') '.env'
+          if (-not (Test-Path $envPath)) { throw 'Hub runtime .env does not exist.' }
+          $map = @{}
+          Get-Content $envPath | ForEach-Object {
+              $line = $_.Trim()
+              if ($line -and -not $line.StartsWith('#')) {
+                  $parts = $line -split '=', 2
+                  if ($parts.Count -eq 2) { $map[$parts[0].Trim()] = $parts[1] }
+              }
+          }
+          foreach ($key in @('HUB_DEMO_ADMIN_LOGIN_ID','HUB_DEMO_ADMIN_PASSWORD','HUB_DEMO_MEMBER_LOGIN_ID','HUB_DEMO_MEMBER_PASSWORD')) {
+              if (-not $map.ContainsKey($key) -or [string]::IsNullOrWhiteSpace([string]$map[$key])) {
+                  throw "Missing server-local filming setting: $key"
+              }
+          }
+
+          docker restart hub-backend | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to restart hub-backend.' }
+          $port = if ($map.ContainsKey('HUB_HOST_PORT')) { [string]$map['HUB_HOST_PORT'] } else { '9070' }
+          $ready = $false
+          for ($i = 0; $i -lt 60; $i++) {
+              try {
+                  $health = Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:$port/actuator/health" -TimeoutSec 4
+                  if ([string]$health.status -eq 'UP') { $ready = $true; break }
+              } catch {}
+              Start-Sleep -Seconds 2
+          }
+          if (-not $ready) { throw 'Hub did not become healthy after demo reset.' }
+
+          foreach ($key in @('HUB_DEMO_ADMIN_LOGIN_ID','HUB_DEMO_ADMIN_PASSWORD','HUB_DEMO_MEMBER_LOGIN_ID','HUB_DEMO_MEMBER_PASSWORD')) {
+              $bytes = [Text.Encoding]::UTF8.GetBytes([string]$map[$key])
+              [Console]::Out.WriteLine([Convert]::ToBase64String($bytes))
+          }
+          PWSH
+
+          wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
+          encoded_wrapper="$(printf '%s' "$wrapper" | iconv -f UTF-8 -t UTF-16LE | base64 -w0)"
+          remote_command="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand $encoded_wrapper"
+
+          raw="$("${auth[@]}" -p "$port" "${ssh_options[@]}" "$SERVER_USER@$SERVER_HOST" "$remote_command" < "$remote_script")"
+          mapfile -t encoded <<< "$raw"
+          if [ "${#encoded[@]}" -ne 4 ]; then
+            echo 'Server did not return exactly four filming credential fields.' >&2
+            exit 1
+          fi
+
+          admin_login="$(printf '%s' "${encoded[0]}" | base64 -d)"
+          admin_password="$(printf '%s' "${encoded[1]}" | base64 -d)"
+          member_login="$(printf '%s' "${encoded[2]}" | base64 -d)"
+          member_password="$(printf '%s' "${encoded[3]}" | base64 -d)"
+
+          echo "::add-mask::$admin_password"
+          echo "::add-mask::$member_password"
+          {
+            echo "HUB_VIDEO_ADMIN_LOGIN=$admin_login"
+            echo "HUB_VIDEO_ADMIN_PASSWORD=$admin_password"
+            echo "HUB_VIDEO_MEMBER_LOGIN=$member_login"
+            echo "HUB_VIDEO_MEMBER_PASSWORD=$member_password"
+            echo "HUB_VIDEO_BASE_URL=https://yellow.it.kr"
+            echo "HUB_VIDEO_PROJECT_NAME=Hub 협업 촬영 데모"
+          } >> "$GITHUB_ENV"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install recorder dependencies
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm install --no-save playwright@1.55.0
+          npx playwright install --with-deps chromium
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg
+
+      - name: Record real administrator and member flows
+        run: node deploy/scripts/record-hub-production-demo.mjs
+
+      - name: Convert recordings to MP4
+        run: |
+          mkdir -p hub-production-videos/mp4
+          for f in hub-production-videos/hub-production-*.webm; do
+            ffmpeg -y -i "$f" -an -c:v libx264 -preset medium -crf 20 -pix_fmt yuv420p "hub-production-videos/mp4/$(basename "${f%.webm}").mp4"
+          done
+
+      - name: Upload real Hub videos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hub-production-admin-member-videos
+          path: |
+            hub-production-videos/mp4/*.mp4
+            hub-production-videos/hub-production-*.webm
+          if-no-files-found: error
+          retention-days: 14
