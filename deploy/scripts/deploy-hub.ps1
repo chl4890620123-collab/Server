@@ -290,11 +290,20 @@ $env:HUB_DB_DATA_DIR = ($DbDataRoot -replace '\\', '/')
 $env:HUB_STORAGE_DATA_DIR = ($StorageDataRoot -replace '\\', '/')
 $env:HUB_CADDYFILE = ($CaddyFile -replace '\\', '/')
 
+# On the production Windows host, Compose v5.3.1 intermittently routes --env-file through
+# the root docker CLI when launched via ProcessStartInfo, which fails with "unknown flag:
+# --env-file" even though Compose itself supports the option. Use Compose's documented
+# environment variables instead. This also keeps the runtime env file server-local and avoids
+# changing any application/container environment semantics.
+$env:COMPOSE_ENV_FILES = $RuntimeEnv
+$env:COMPOSE_PROJECT_NAME = 'hub-production'
+$env:COMPOSE_FILE = $ComposeFile
+
 Say '[hub] validating production compose'
-Invoke-Docker -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'hub-production', '-f', $ComposeFile, 'config', '--quiet') -TimeoutSeconds 60 | Out-Null
+Invoke-Docker -Arguments @('compose', 'config', '--quiet') -TimeoutSeconds 60 | Out-Null
 
 Say '[hub] starting production containers'
-$composeUp = Invoke-Docker -Arguments @('compose', '--env-file', $RuntimeEnv, '-p', 'hub-production', '-f', $ComposeFile, 'up', '-d', '--no-build', '--pull', 'never', '--remove-orphans') -TimeoutSeconds 180 -AllowFailure
+$composeUp = Invoke-Docker -Arguments @('compose', 'up', '-d', '--no-build', '--pull', 'never', '--remove-orphans') -TimeoutSeconds 180 -AllowFailure
 if (-not [string]::IsNullOrWhiteSpace($composeUp.StdOut)) { Say $composeUp.StdOut.Trim() }
 if (-not [string]::IsNullOrWhiteSpace($composeUp.StdErr)) { Say $composeUp.StdErr.Trim() }
 if ($composeUp.ExitCode -ne 0) {
