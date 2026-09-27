@@ -49,3 +49,6 @@ Requested: 2026-09-28
 
 Deploy final audited Hub main after PR #37 #38 #39: 1eec0d3a2c36411f5e7f3c03cbe72e07c4a662a1
 Requested: 2026-09-28
+
+Redeploy Hub after Flyway V25 collision fix: 534d11e611f2bd0cbb642253929c39238b243db5
+Requested: 2026-09-28
