@@ -3,3 +3,6 @@ Requested: 2026-09-28
 
 Re-check after failed redeploy 36357774671.
 Requested: 2026-09-28T08:32+09:00
+
+Inspect Flyway schema history before migration fix.
+Requested: 2026-09-28T08:38+09:00
