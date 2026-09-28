@@ -58,3 +58,6 @@ Requested: 2026-09-28
 
 Redeploy Hub with fixed Compose env handling and Flyway-safe Hub main: fcc1b1160c07cea00e8da2aaa3adfcc6f4184cc7
 Requested: 2026-09-28
+
+Deploy Hub PR #44 unified todo hold status: 80dfb139d30575cd591fc931da8e3e4a41a01f25
+Requested: 2026-09-28
