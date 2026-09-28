@@ -70,3 +70,6 @@ Requested: 2026-09-28T12:35+09:00
 
 Deploy Hub AI-friendly workflow foundation main: b6cb2fd14fa00b95ffa748a4c58426742d3915b4
 Requested: 2026-09-28T19:57+09:00
+
+Deploy Hub PR #46 workflow state accuracy: 25f611a43933dbaee74af7b464d4277711f0a07b
+Requested: 2026-09-28T20:51+09:00
