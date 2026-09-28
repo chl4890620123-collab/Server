@@ -67,3 +67,6 @@ Requested: 2026-09-28T10:53+09:00
 
 Deploy Hub main after Drive/Slack/Notion document export: 2cf99abba258f3fbce5c361c7d862586d35afc75
 Requested: 2026-09-28T12:35+09:00
+
+Deploy Hub AI-friendly workflow foundation main: b6cb2fd14fa00b95ffa748a4c58426742d3915b4
+Requested: 2026-09-28T19:57+09:00
