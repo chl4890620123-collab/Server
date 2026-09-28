@@ -61,3 +61,6 @@ Requested: 2026-09-28
 
 Deploy Hub PR #44 unified todo hold status: 80dfb139d30575cd591fc931da8e3e4a41a01f25
 Requested: 2026-09-28
+
+Deploy Hub main after file-transfer project scoping and manual-note evidence linking: bcb1f403f9b76c9605c17cf9577e449d92f4c3ef
+Requested: 2026-09-28T10:53+09:00
