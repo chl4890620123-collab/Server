@@ -73,3 +73,6 @@ Requested: 2026-09-28T19:57+09:00
 
 Deploy Hub PR #46 workflow state accuracy: 25f611a43933dbaee74af7b464d4277711f0a07b
 Requested: 2026-09-28T20:51+09:00
+
+Deploy Hub PR #47 managed search answer scope: 30c7ae81f6f0a3027e32078be7949b520babe59d
+Requested: 2026-09-29T08:28+09:00
