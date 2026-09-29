@@ -76,3 +76,6 @@ Requested: 2026-09-28T20:51+09:00
 
 Deploy Hub PR #47 managed search answer scope: 30c7ae81f6f0a3027e32078be7949b520babe59d
 Requested: 2026-09-29T08:28+09:00
+
+Deploy Hub PR #48 strict admin file answer evidence: 3a48021a32bddd9a0683a410eaff80ad7665736d
+Requested: 2026-09-29T09:16+09:00
