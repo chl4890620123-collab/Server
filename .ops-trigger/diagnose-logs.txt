@@ -1,1 +1,1 @@
-Run synthetic actual AI calls and aggregate failure classes only. No stored document contents or raw logs. 2026-10-02.
+Metadata status during build; synthetic AI smoke if available. 2026-10-02T18:57Z.
