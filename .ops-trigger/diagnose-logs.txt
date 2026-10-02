@@ -1,1 +1,1 @@
-Metadata-only AI health/model diagnosis requested 2026-10-02. No container logs or document contents transmitted.
+Run synthetic actual AI calls and aggregate failure classes only. No stored document contents or raw logs. 2026-10-02.
