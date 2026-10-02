@@ -89,6 +89,7 @@ jobs:
           $dbUser = $dbUser.Trim()
           $dbName = $dbName.Trim()
           if ($dbUser -and $dbName) {
+              docker exec hub-db psql -U $dbUser -d $dbName -P pager=off -c "SELECT j.status,j.progress,CASE WHEN error_message LIKE '%503%' OR error_message LIKE '%UNAVAILABLE%' OR error_message LIKE '%혼잡%' THEN 'UPSTREAM_OVERLOAD' WHEN error_message LIKE '%detail%' THEN 'UPSTREAM_EMPTY_DETAIL' WHEN error_message LIKE '%Timeout%' OR error_message LIKE '%시간%' THEN 'TIMEOUT' ELSE COALESCE(error_code,'NONE') END AS failure_class,COUNT(*) FROM processing_job j JOIN project p ON p.id=j.project_id WHERE p.name LIKE 'Hub %' AND j.job_type='DOCUMENT_ANALYSIS' GROUP BY 1,2,3;" 2>&1 | Write-Output
           } else {
               [Console]::Out.WriteLine('Could not resolve POSTGRES_USER/POSTGRES_DB for read-only Flyway history query.')
           }
