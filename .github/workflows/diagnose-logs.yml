@@ -91,6 +91,19 @@ jobs:
 
           [Console]::Out.WriteLine('--- docker/build-related processes ---')
           Get-Process | Where-Object { $_.Name -match 'docker|com\.docker|buildkit|gradle|java|node' } | Select-Object Name,Id,StartTime,@{N='MemMB';E={[math]::Round($_.WorkingSet64/1MB,0)}} | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
+          [Console]::Out.WriteLine('--- Hub local HTTP checks ---')
+          foreach ($target in @('http://127.0.0.1:9070/', 'http://127.0.0.1:9070/actuator/health', 'https://yellow.it.kr/')) {
+              [Console]::Out.WriteLine($target)
+              curl.exe --silent --show-error --max-time 12 --output NUL --write-out 'HTTP=%{http_code} remote=%{remote_ip} time=%{time_total}\n' $target 2>&1 | Write-Output
+          }
+          [Console]::Out.WriteLine('--- HTTPS front door on local host ---')
+          curl.exe --silent --show-error --max-time 12 --resolve yellow.it.kr:443:127.0.0.1 --output NUL --write-out 'HTTP=%{http_code} time=%{time_total}\n' https://yellow.it.kr/ 2>&1 | Write-Output
+          [Console]::Out.WriteLine('--- Public DNS records ---')
+          Resolve-DnsName yellow.it.kr -Type A 2>&1 | Format-Table -AutoSize | Out-String -Width 180 | Write-Output
+          Resolve-DnsName yellow.it.kr -Type AAAA 2>&1 | Format-Table -AutoSize | Out-String -Width 180 | Write-Output
+          [Console]::Out.WriteLine('--- Caddy recent logs ---')
+          docker logs --tail 60 hub-caddy 2>&1 | Write-Output
+          docker logs --tail 80 saver-caddy-1 2>&1 | Write-Output
           PWSH
 
           wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
