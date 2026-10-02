@@ -57,7 +57,7 @@ jobs:
           [Console]::Out.WriteLine('--- hub-backend last 300 log lines ---')
 
           [Console]::Out.WriteLine('--- hub-ai logs and non-secret model settings ---')
-          docker exec hub-ai python -c "import os; print({k:os.getenv(k) for k in ['HUB_AI_MODE','GEMINI_MODEL','GEMINI_FALLBACK_MODEL','GEMINI_READ_TIMEOUT_SECONDS']})"
+          docker exec hub-ai python -c "from app import config; print({'mode':config.AI_MODE,'primary':config.GEMINI_MODEL,'fallback':config.GEMINI_FALLBACK_MODEL,'read_timeout':config.GEMINI_READ_TIMEOUT_SECONDS})"
           docker exec hub-ai python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=10).read().decode())"
 
           [Console]::Out.WriteLine('--- Synthetic real AI calls; no stored documents used ---')
