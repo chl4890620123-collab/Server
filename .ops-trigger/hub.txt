@@ -1,1 +1,1 @@
-Deploy verified real document re-summary from Hub main 3db0b30f8a083a9d54f729af5228bf906214d369 using build-first rollout. Preserve existing data and candidates. 2026-10-02.
+Deploy Hub main 2119b48d614ee013ad0c487864770017b5676b03 for manual project search index repair. Build first; preserve running data and existing content. 2026-10-02.
