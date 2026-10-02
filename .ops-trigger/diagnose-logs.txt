@@ -1,1 +1,1 @@
-Validate actual AI analyze and RAG using synthetic text after Gemini recovery deployment succeeded. No existing document contents. 2026-10-02.
+Read-only Atlas demo text/chunk/vector length checks, no document content. 2026-10-02.
