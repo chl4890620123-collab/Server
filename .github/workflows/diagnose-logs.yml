@@ -60,6 +60,24 @@ jobs:
           docker exec hub-ai python -c "import os; print({k:os.getenv(k) for k in ['HUB_AI_MODE','GEMINI_MODEL','GEMINI_FALLBACK_MODEL','GEMINI_READ_TIMEOUT_SECONDS']})"
           docker exec hub-ai python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=10).read().decode())"
 
+          [Console]::Out.WriteLine('--- Synthetic real AI calls; no stored documents used ---')
+          @'
+          import json, urllib.request
+          text = 'Demo validation: the beta target is the internal QA team. Display the original source next to every AI answer. Alex must share the contract draft by 2026-10-07.'
+          for path, payload in [('analyze', {'text':text,'source_date':'2026-10-02'}), ('rag', {'question':'Who is the beta target and what is the source display rule?','chunks':[{'id':1,'text':text}]})]:
+              try:
+                  req = urllib.request.Request('http://127.0.0.1:8000/api/v1/'+path, data=json.dumps(payload).encode(), headers={'Content-Type':'application/json'})
+                  result = json.loads(urllib.request.urlopen(req,timeout=160).read())
+                  ok = bool(result.get('summary')) if path == 'analyze' else bool(result.get('answer') and result.get('evidence'))
+                  print(path, 'PASS' if ok else 'FAIL', 'synthetic_result=', json.dumps(result))
+                  if not ok: raise RuntimeError('Missing summary/evidence')
+              except Exception as exc:
+                  print(path, 'FAIL', type(exc).__name__, getattr(exc,'code',None))
+                  raise
+          '@ | docker exec -i hub-ai python -
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' hub-ai hub-backend
+
           [Console]::Out.WriteLine('--- hub-db container status ---')
           docker ps -a --filter "name=hub-db" 2>&1 | Write-Output
 
