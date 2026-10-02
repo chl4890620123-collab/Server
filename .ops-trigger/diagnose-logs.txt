@@ -1,14 +1,1 @@
-Read-only Hub backend/db diagnostics after failed deployment.
-Requested: 2026-09-28
-
-Re-check after failed redeploy 36357774671.
-Requested: 2026-09-28T08:32+09:00
-
-Inspect Flyway schema history before migration fix.
-Requested: 2026-09-28T08:38+09:00
-
-Read-only diagnosis during Hub deploy run 36412777390: 2026-09-28T20:05+09:00
-
-Diagnose current Hub public outage: 2026-10-02T23:47+09:00
-
-Trace container gateway after public HTTP 502.
+Metadata-only AI health/model diagnosis requested 2026-10-02. No container logs or document contents transmitted.
