@@ -51,90 +51,12 @@ jobs:
           remote_script="$RUNNER_TEMP/diagnose-logs.ps1"
           cat > "$remote_script" <<'PWSH'
           $ErrorActionPreference = 'Continue'
-          [Console]::Out.WriteLine('--- hub-backend container status ---')
-          docker ps -a --filter "name=hub-backend" 2>&1 | Write-Output
-
-          [Console]::Out.WriteLine('--- hub-backend last 300 log lines ---')
-
-          [Console]::Out.WriteLine('--- hub-ai logs and non-secret model settings ---')
-          docker exec hub-ai python -c "import os; print({k:os.getenv(k) for k in ['HUB_AI_MODE','GEMINI_MODEL','GEMINI_FALLBACK_MODEL','GEMINI_READ_TIMEOUT_SECONDS']})"
-          docker exec hub-ai python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=10).read().decode())"
-
-          [Console]::Out.WriteLine('--- Synthetic real AI calls; no stored documents used ---')
-          @'
-          import json, urllib.request
-          text = 'Demo validation: the beta target is the internal QA team. Display the original source next to every AI answer. Alex must share the contract draft by 2026-10-07.'
-          for path, payload in [('analyze', {'text':text,'source_date':'2026-10-02'}), ('rag', {'question':'Who is the beta target and what is the source display rule?','chunks':[{'id':1,'text':text}]})]:
-              try:
-                  req = urllib.request.Request('http://127.0.0.1:8000/api/v1/'+path, data=json.dumps(payload).encode(), headers={'Content-Type':'application/json'})
-                  result = json.loads(urllib.request.urlopen(req,timeout=160).read())
-                  ok = bool(result.get('summary')) if path == 'analyze' else bool(result.get('answer') and result.get('evidence'))
-                  print(path, 'PASS' if ok else 'FAIL', 'synthetic_result=', json.dumps(result))
-                  if not ok: raise RuntimeError('Missing summary/evidence')
-              except Exception as exc:
-                  print(path, 'FAIL', type(exc).__name__, getattr(exc,'code',None))
-                  raise
-          '@ | docker exec -i hub-ai python -
-          if ($LASTEXITCODE -ne 0) { [Console]::Out.WriteLine('AI smoke unavailable during deployment') }
-          docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' hub-ai hub-backend
-
-          [Console]::Out.WriteLine('--- hub-db container status ---')
-          docker ps -a --filter "name=hub-db" 2>&1 | Write-Output
-
-          [Console]::Out.WriteLine('--- hub-db last 100 log lines ---')
-
-          [Console]::Out.WriteLine('--- Flyway schema history (read-only) ---')
-          $dbUser = [string](docker exec hub-db printenv POSTGRES_USER)
-          $dbName = [string](docker exec hub-db printenv POSTGRES_DB)
-          $dbUser = $dbUser.Trim()
-          $dbName = $dbName.Trim()
-          if ($dbUser -and $dbName) {
-              docker exec hub-db psql -U $dbUser -d $dbName -P pager=off -c "SELECT j.status,j.progress,CASE WHEN error_message LIKE '%503%' OR error_message LIKE '%UNAVAILABLE%' OR error_message LIKE '%혼잡%' THEN 'UPSTREAM_OVERLOAD' WHEN error_message LIKE '%detail%' THEN 'UPSTREAM_EMPTY_DETAIL' WHEN error_message LIKE '%Timeout%' OR error_message LIKE '%시간%' THEN 'TIMEOUT' ELSE COALESCE(error_code,'NONE') END AS failure_class,COUNT(*) FROM processing_job j JOIN project p ON p.id=j.project_id WHERE p.name LIKE 'Hub %' AND j.job_type='DOCUMENT_ANALYSIS' GROUP BY 1,2,3;" 2>&1 | Write-Output
-          } else {
-              [Console]::Out.WriteLine('Could not resolve POSTGRES_USER/POSTGRES_DB for read-only Flyway history query.')
-          }
-
-          [Console]::Out.WriteLine('--- Build stage (no command arguments printed) ---')
+          Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID,@{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}} | Format-Table -AutoSize | Out-String | Write-Output
+          Get-CimInstance Win32_OperatingSystem | Select-Object @{N='FreeGB';E={[math]::Round($_.FreePhysicalMemory/1MB,1)}} | Format-Table -AutoSize | Out-String | Write-Output
           Get-CimInstance Win32_Process -Filter "Name='docker.exe'" | ForEach-Object {
               $stage = if ($_.CommandLine -match 'hub-runtime-warm') { 'runtime-image-warmup' } elseif ($_.CommandLine -match 'ai-service') { 'AI-image-build' } elseif ($_.CommandLine -match 'backend') { 'backend-image-build' } else { 'other-docker-operation' }
               [Console]::Out.WriteLine("Docker pid=$($_.ProcessId) stage=$stage")
           }
-
-          [Console]::Out.WriteLine('--- disk space ---')
-          Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID,@{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}},@{N='SizeGB';E={[math]::Round($_.Size/1GB,1)}} | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
-
-          [Console]::Out.WriteLine('--- memory ---')
-          Get-CimInstance Win32_OperatingSystem | Select-Object @{N='FreeGB';E={[math]::Round($_.FreePhysicalMemory/1MB,1)}},@{N='TotalGB';E={[math]::Round($_.TotalVisibleMemorySize/1MB,1)}} | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
-
-          [Console]::Out.WriteLine('--- docker system df ---')
-          docker system df -v 2>&1 | Select-Object -First 40 | Write-Output
-
-          [Console]::Out.WriteLine('--- all containers (any project) ---')
-          docker ps -a 2>&1 | Write-Output
-
-          [Console]::Out.WriteLine('--- top CPU processes ---')
-          Get-Process | Sort-Object CPU -Descending | Select-Object -First 15 Name,Id,CPU,@{N='MemMB';E={[math]::Round($_.WorkingSet64/1MB,0)}} | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
-
-          [Console]::Out.WriteLine('--- docker/build-related processes ---')
-          Get-Process | Where-Object { $_.Name -match 'docker|com\.docker|buildkit|gradle|java|node' } | Select-Object Name,Id,StartTime,@{N='MemMB';E={[math]::Round($_.WorkingSet64/1MB,0)}} | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
-          [Console]::Out.WriteLine('--- Hub local HTTP checks ---')
-          foreach ($target in @('http://127.0.0.1:9070/', 'http://127.0.0.1:9070/actuator/health', 'https://yellow.it.kr/')) {
-              [Console]::Out.WriteLine($target)
-              curl.exe --silent --show-error --max-time 12 --output NUL --write-out 'HTTP=%{http_code} remote=%{remote_ip} time=%{time_total}\n' $target 2>&1 | Write-Output
-          }
-          [Console]::Out.WriteLine('--- HTTPS front door on local host ---')
-          curl.exe --silent --show-error --max-time 12 --resolve yellow.it.kr:443:127.0.0.1 --output NUL --write-out 'HTTP=%{http_code} time=%{time_total}\n' https://yellow.it.kr/ 2>&1 | Write-Output
-          [Console]::Out.WriteLine('--- Public DNS records ---')
-          Resolve-DnsName yellow.it.kr -Type A 2>&1 | Format-Table -AutoSize | Out-String -Width 180 | Write-Output
-          Resolve-DnsName yellow.it.kr -Type AAAA 2>&1 | Format-Table -AutoSize | Out-String -Width 180 | Write-Output
-          [Console]::Out.WriteLine('--- Caddy recent logs ---')
-          [Console]::Out.WriteLine('--- Container HTTP probes ---')
-          docker exec hub-backend curl --silent --show-error --max-time 8 --output /dev/null --write-out 'backend HTTP=%{http_code}' http://127.0.0.1:8080/actuator/health
-          docker exec hub-caddy wget -S -O /dev/null -T 8 http://127.0.0.1/
-          docker exec hub-caddy wget -S -O /dev/null -T 8 http://backend:8080/actuator/health
-          [Console]::Out.WriteLine('--- Gateway network addresses ---')
-          docker inspect --format '{{json .NetworkSettings.Networks}}' hub-caddy hub-backend saver-caddy-1
-          [Console]::Out.WriteLine('--- Hub gateway current configuration ---')
           PWSH
 
           wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
