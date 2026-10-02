@@ -1,1 +1,1 @@
-Deploy Gemini transient recovery fix from Hub main; preserve all runtime data. 2026-10-02.
+Deploy verified real document re-summary from Hub main 3db0b30f8a083a9d54f729af5228bf906214d369 using build-first rollout. Preserve existing data and candidates. 2026-10-02.
