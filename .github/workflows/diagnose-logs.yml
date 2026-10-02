@@ -94,6 +94,12 @@ jobs:
               [Console]::Out.WriteLine('Could not resolve POSTGRES_USER/POSTGRES_DB for read-only Flyway history query.')
           }
 
+          [Console]::Out.WriteLine('--- Build stage (no command arguments printed) ---')
+          Get-CimInstance Win32_Process -Filter "Name='docker.exe'" | ForEach-Object {
+              $stage = if ($_.CommandLine -match 'hub-runtime-warm') { 'runtime-image-warmup' } elseif ($_.CommandLine -match 'ai-service') { 'AI-image-build' } elseif ($_.CommandLine -match 'backend') { 'backend-image-build' } else { 'other-docker-operation' }
+              [Console]::Out.WriteLine("Docker pid=$($_.ProcessId) stage=$stage")
+          }
+
           [Console]::Out.WriteLine('--- disk space ---')
           Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object DeviceID,@{N='FreeGB';E={[math]::Round($_.FreeSpace/1GB,1)}},@{N='SizeGB';E={[math]::Round($_.Size/1GB,1)}} | Format-Table -AutoSize | Out-String -Width 200 | Write-Output
 
