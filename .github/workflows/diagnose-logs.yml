@@ -60,22 +60,6 @@ jobs:
           docker exec hub-ai python -c "from app import config; print({'mode':config.AI_MODE,'primary':config.GEMINI_MODEL,'fallback':config.GEMINI_FALLBACK_MODEL,'read_timeout':config.GEMINI_READ_TIMEOUT_SECONDS})"
           docker exec hub-ai python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=10).read().decode())"
 
-          [Console]::Out.WriteLine('--- Synthetic real AI calls; no stored documents used ---')
-          @'
-          import json, urllib.request
-          text = 'Demo validation: the beta target is the internal QA team. Display the original source next to every AI answer. Alex must share the contract draft by 2026-10-07.'
-          for path, payload in [('analyze', {'text':text,'source_date':'2026-10-02'}), ('rag', {'question':'Who is the beta target and what is the source display rule?','chunks':[{'id':1,'text':text}]})]:
-              try:
-                  req = urllib.request.Request('http://127.0.0.1:8000/api/v1/'+path, data=json.dumps(payload).encode(), headers={'Content-Type':'application/json'})
-                  result = json.loads(urllib.request.urlopen(req,timeout=160).read())
-                  ok = bool(result.get('summary')) if path == 'analyze' else bool(result.get('answer') and result.get('evidence'))
-                  print(path, 'PASS' if ok else 'FAIL', 'synthetic_result=', json.dumps(result))
-                  if not ok: raise RuntimeError('Missing summary/evidence')
-              except Exception as exc:
-                  print(path, 'FAIL', type(exc).__name__, getattr(exc,'code',None))
-                  raise
-          '@ | docker exec -i hub-ai python -
-          if ($LASTEXITCODE -ne 0) { [Console]::Out.WriteLine('AI smoke unavailable during deployment') }
           docker inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' hub-ai hub-backend
 
           [Console]::Out.WriteLine('--- hub-db container status ---')
@@ -90,6 +74,7 @@ jobs:
           $dbName = $dbName.Trim()
           if ($dbUser -and $dbName) {
               docker exec hub-db psql -U $dbUser -d $dbName -P pager=off -c "SELECT j.status,j.progress,CASE WHEN error_message LIKE '%503%' OR error_message LIKE '%UNAVAILABLE%' OR error_message LIKE '%혼잡%' THEN 'UPSTREAM_OVERLOAD' WHEN error_message LIKE '%detail%' THEN 'UPSTREAM_EMPTY_DETAIL' WHEN error_message LIKE '%Timeout%' OR error_message LIKE '%시간%' THEN 'TIMEOUT' ELSE COALESCE(error_code,'NONE') END AS failure_class,COUNT(*) FROM processing_job j JOIN project p ON p.id=j.project_id WHERE p.name LIKE 'Hub %' AND j.job_type='DOCUMENT_ANALYSIS' GROUP BY 1,2,3;" 2>&1 | Write-Output
+              docker exec hub-db psql -U $dbUser -d $dbName -P pager=off -c "SELECT d.id AS document_id,v.id AS version_id,v.version_no,LENGTH(v.full_text) AS text_chars,LENGTH(v.summary) AS summary_chars,(SELECT COUNT(*) FROM document_chunk ch WHERE ch.version_id=v.id) AS chunks,(SELECT COUNT(*) FROM document_chunk ch WHERE ch.version_id=v.id AND ch.embedding_vector IS NOT NULL) AS vectors,(SELECT COUNT(*) FROM ai_run a WHERE a.document_version_id=v.id AND a.status='SUCCESS') AS successful_runs FROM document d JOIN project p ON p.id=d.project_id JOIN document_version v ON v.document_id=d.id WHERE p.name LIKE 'Hub %' AND d.original_name LIKE '%Atlas%' ORDER BY v.id;" 2>&1 | Write-Output
           } else {
               [Console]::Out.WriteLine('Could not resolve POSTGRES_USER/POSTGRES_DB for read-only Flyway history query.')
           }
