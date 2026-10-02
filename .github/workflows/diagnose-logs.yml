@@ -104,6 +104,14 @@ jobs:
           [Console]::Out.WriteLine('--- Caddy recent logs ---')
           docker logs --tail 60 hub-caddy 2>&1 | Write-Output
           docker logs --tail 80 saver-caddy-1 2>&1 | Write-Output
+          [Console]::Out.WriteLine('--- Container HTTP probes ---')
+          docker exec hub-backend curl --silent --show-error --max-time 8 --output /dev/null --write-out 'backend HTTP=%{http_code}' http://127.0.0.1:8080/actuator/health
+          docker exec hub-caddy wget -S -O /dev/null -T 8 http://127.0.0.1/
+          docker exec hub-caddy wget -S -O /dev/null -T 8 http://backend:8080/actuator/health
+          [Console]::Out.WriteLine('--- Gateway network addresses ---')
+          docker inspect --format '{{json .NetworkSettings.Networks}}' hub-caddy hub-backend saver-caddy-1
+          [Console]::Out.WriteLine('--- Hub gateway current configuration ---')
+          docker exec hub-caddy cat /etc/caddy/Caddyfile
           PWSH
 
           wrapper='$writer = New-Object System.IO.StreamWriter([Console]::OpenStandardOutput()); $writer.AutoFlush = $true; [Console]::SetOut($writer); $script = [Console]::In.ReadToEnd(); Invoke-Expression $script'
