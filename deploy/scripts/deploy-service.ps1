@@ -234,18 +234,8 @@ try {
     Wait-DockerEngine -Name $Service
     switch ($Service) {
         'hub' {
-            # A previous attempt got as far as `docker compose up` and left hub-ai unhealthy,
-            # which means hub-db/hub-ai/hub-backend/hub-caddy were created (some started) and then
-            # abandoned when that attempt failed - the next attempt after that hung completely
-            # silently for the full 50-minute SSH timeout with zero output, even before git
-            # checkout, consistent with leftover containers/state from the failed attempt
-            # contending with (or wedging) this one. Force-remove any containers with these exact
-            # names before doing anything else, so every attempt starts from a clean slate. try/catch
-            # because a missing container's stderr write is promoted to a terminating error under
-            # this script's $ErrorActionPreference='Stop' regardless of stream redirection.
-            foreach ($staleContainer in @('hub-caddy', 'hub-backend', 'hub-ai', 'hub-db')) {
-                try { docker rm -f $staleContainer 2>$null | Out-Null } catch {}
-            }
+            # Keep the running stack and rollback images available while building. Compose
+            # replaces changed services only after successful builds and the DB backup.
             # A bare `docker pull` of these small runtime images (used later by docker compose,
             # not built from source) fails immediately with a Windows credential-helper error ("A
             # specified logon session does not exist") on this machine - reproduced regardless of
@@ -267,17 +257,6 @@ try {
                 } finally {
                     Remove-Item -Recurse -Force $warmDir -ErrorAction SilentlyContinue
                 }
-            }
-            # Clear images left over from any previous interrupted build so a corrupted/partial
-            # layer cannot silently poison this attempt - forces a genuinely fresh rebuild.
-            foreach ($staleImage in @('hub-production-ai:latest', 'hub-production-backend:latest')) {
-                # Under $ErrorActionPreference='Stop' (set script-wide), a native command writing
-                # to stderr is promoted to a terminating error the instant it's written,
-                # regardless of stream redirection (2>&1, *>$null - neither stops it, only try/catch
-                # does). Without this, the very first hub deploy - or any deploy where a previous
-                # attempt never left an image behind - aborts here simply because there was nothing
-                # to remove.
-                try { docker image rm -f $staleImage 2>$null | Out-Null } catch {}
             }
             # backend/Dockerfile expects the repo root as build context (it COPYs frontend/ and
             # backend/ side by side), unlike the other apps' self-contained per-service Dockerfiles.
