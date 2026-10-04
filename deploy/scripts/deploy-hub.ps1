@@ -334,8 +334,81 @@ for ($attempt = 1; $attempt -le 48; $attempt++) {
 }
 if (-not $localReady) { Fail 'Hub local functional check failed.' }
 
+Say '[hub] running AI functional smoke'
+$aiSmoke = @'
+import json
+import urllib.request
+
+sample = (
+    "Hub deployment smoke: the beta target is the internal QA team. "
+    "Every AI answer must show source evidence. "
+    "Alex must share the contract draft by 2026-10-07."
+)
+
+def post(path, payload):
+    request = urllib.request.Request(
+        "http://127.0.0.1:8000/api/v1/" + path,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=180) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+analysis = post("analyze", {"text": sample, "source_date": "2026-10-05"})
+if not analysis.get("summary"):
+    raise RuntimeError("AI analyze smoke returned no summary")
+
+rag = post("rag", {
+    "question": "Who is the beta target and what source rule applies?",
+    "chunks": [{"id": 1, "text": sample}],
+})
+if not rag.get("answer") or not rag.get("evidence"):
+    raise RuntimeError("AI RAG smoke returned no grounded answer/evidence")
+
+print("AI functional smoke PASS")
+'@
+$aiSmoke | docker exec -i hub-ai python -
+if ($LASTEXITCODE -ne 0) { Fail 'Hub AI functional smoke failed.' }
+
 $publicDomain = [string]$envMap['HUB_PUBLIC_DOMAIN']
 if ([string]::IsNullOrWhiteSpace($publicDomain)) { $publicDomain = 'yellow.it.kr' }
+
+$demoModeEnabled = $envMap.ContainsKey('HUB_DEMO_MODE') -and ([string]$envMap['HUB_DEMO_MODE']).Trim().ToLowerInvariant() -eq 'true'
+$demoAdminId = if ($envMap.ContainsKey('HUB_DEMO_ADMIN_LOGIN_ID')) { [string]$envMap['HUB_DEMO_ADMIN_LOGIN_ID'] } else { 'video-admin' }
+$demoAdminPassword = if ($envMap.ContainsKey('HUB_DEMO_ADMIN_PASSWORD')) { [string]$envMap['HUB_DEMO_ADMIN_PASSWORD'] } else { '' }
+
+if ($demoModeEnabled -and -not [string]::IsNullOrWhiteSpace($demoAdminPassword)) {
+    Say '[hub] running authenticated demo search smoke'
+    $publicBase = "https://$publicDomain"
+    $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+    try {
+        Invoke-WebRequest -UseBasicParsing -Uri "$publicBase/login" -WebSession $session -TimeoutSec 20 | Out-Null
+        $xsrfCookie = $session.Cookies.GetCookies($publicBase) | Where-Object { $_.Name -eq 'XSRF-TOKEN' } | Select-Object -First 1
+        if ($null -eq $xsrfCookie -or [string]::IsNullOrWhiteSpace([string]$xsrfCookie.Value)) {
+            Fail 'Authenticated smoke could not obtain CSRF cookie.'
+        }
+        $headers = @{ 'X-XSRF-TOKEN' = [string]$xsrfCookie.Value }
+        $loginBody = @{ identifier = $demoAdminId; password = $demoAdminPassword } | ConvertTo-Json -Compress
+        Invoke-RestMethod -Method Post -Uri "$publicBase/api/auth/login" -WebSession $session -Headers $headers -ContentType 'application/json' -Body $loginBody -TimeoutSec 20 | Out-Null
+
+        $projects = @(Invoke-RestMethod -Method Get -Uri "$publicBase/api/projects" -WebSession $session -TimeoutSec 20)
+        $demoProject = $projects | Where-Object { $_.name -eq 'Hub 협업 촬영 데모' } | Select-Object -First 1
+        if ($null -eq $demoProject) { Fail 'Authenticated smoke could not find the demo project.' }
+
+        $projectId = [long]$demoProject.id
+        $found = @(Invoke-RestMethod -Method Get -Uri "$publicBase/api/projects/$projectId/materials/search?q=Atlas%20%EB%B2%A0%ED%83%80&offset=0" -WebSession $session -TimeoutSec 30)
+        if ($found.Count -lt 1) { Fail 'Authenticated smoke expected Atlas search results but found none.' }
+
+        $missing = @(Invoke-RestMethod -Method Get -Uri "$publicBase/api/projects/$projectId/materials/search?q=__hub_smoke_no_result_20261005__&offset=0" -WebSession $session -TimeoutSec 30)
+        if ($missing.Count -ne 0) { Fail 'Authenticated smoke expected an empty result for the no-match query.' }
+
+        Say '[hub] authenticated search smoke PASS'
+    } catch {
+        Fail "Hub authenticated search smoke failed: $($_.Exception.GetType().Name)"
+    }
+} else {
+    Say '[hub] demo credentials are not enabled; authenticated search smoke skipped'
+}
 
 # Hub deliberately does not register a route on the shared MOVEAI Caddy (dahum/moveai/yellow-server
 # still use that instance and are out of scope here - see project memory on the 2026-09-23 decision
