@@ -1,1 +1,1 @@
-Deploy Hub main 3976613cfc6b692c55c9eb7939211c41bb98be9d for exact managed document scoping in AI questions. Build first; preserve data. 2026-10-02.
+Deploy Hub main c2b303da1e2785dabf9400c2385fa7f7b602ee27 with portfolio demo automation and strengthened functional smoke validation. Build first; preserve production data. 2026-10-05.
