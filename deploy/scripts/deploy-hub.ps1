@@ -391,8 +391,14 @@ if ($demoModeEnabled -and -not [string]::IsNullOrWhiteSpace($demoAdminPassword))
         $loginBody = @{ identifier = $demoAdminId; password = $demoAdminPassword } | ConvertTo-Json -Compress
         Invoke-RestMethod -Method Post -Uri "$publicBase/api/auth/login" -WebSession $session -Headers $headers -ContentType 'application/json' -Body $loginBody -TimeoutSec 20 | Out-Null
 
-        $projects = @(Invoke-RestMethod -Method Get -Uri "$publicBase/api/projects" -WebSession $session -TimeoutSec 20)
-        $demoProject = $projects | Where-Object { $_.name -eq 'Hub 협업 촬영 데모' } | Select-Object -First 1
+        # Windows PowerShell 5.1 reads BOM-less scripts using the host ANSI codepage.
+        # Keep the expected Korean name ASCII-escaped and decode JSON bytes explicitly as UTF-8.
+        $projectResponse = Invoke-WebRequest -UseBasicParsing -Uri "$publicBase/api/projects" -WebSession $session -TimeoutSec 20
+        $projectResponse.RawContentStream.Position = 0
+        $projectReader = New-Object System.IO.StreamReader($projectResponse.RawContentStream, [System.Text.Encoding]::UTF8)
+        try { $projects = @($projectReader.ReadToEnd() | ConvertFrom-Json) } finally { $projectReader.Dispose() }
+        $demoProjectName = '"Hub \ud611\uc5c5 \ucd2c\uc601 \ub370\ubaa8"' | ConvertFrom-Json
+        $demoProject = $projects | Where-Object { $_.name -eq $demoProjectName } | Select-Object -First 1
         if ($null -eq $demoProject) { Fail 'Authenticated smoke could not find the demo project.' }
 
         $projectId = [long]$demoProject.id
