@@ -1,1 +1,1 @@
-Deploy Hub main c2b303da1e2785dabf9400c2385fa7f7b602ee27 with portfolio demo automation and strengthened functional smoke validation. Build first; preserve production data. 2026-10-05.
+Deploy Hub main 883147bf93c27e4d8eae8b52dbef5fa3b597883a after PR #54 and Server UTF-8 smoke fix. Preserve production data; validate AI, authenticated search, and public health. 2026-10-05.
