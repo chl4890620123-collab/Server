@@ -1,10 +1,7 @@
-# Hub's own gateway - hub's direct public entry point (does not route through the shared MOVEAI
-# Caddy; see deploy/compose/hub.yml).
-# Host :HUB_HOST_PORT -> Hub Caddy :80 -> Spring Boot :8080.
-# Static frontend is served by Spring Boot itself, so there is no separate frontend host port.
-# Plain HTTP: nothing else terminates TLS in front of this, so HUB_COOKIE_SECURE/
-# HUB_ENFORCE_SECURE_CONFIG stay false until this gets its own certificate.
-:80 {
+# Hub's dedicated public gateway. Caddy obtains and renews the certificate for
+# HUB_PUBLIC_DOMAIN automatically. Forward public TCP 443 to HUB_HTTPS_HOST_PORT
+# (default 9443) on this host; HUB_HOST_PORT remains the HTTP redirect entry point.
+{$HUB_PUBLIC_DOMAIN} {
     encode zstd gzip
 
     reverse_proxy backend:8080 {

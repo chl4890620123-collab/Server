@@ -154,6 +154,7 @@ Say "[hub] Docker Compose ready: $composeVersionText"
 if (-not (Test-Path $RuntimeEnv)) {
     @"
 HUB_HOST_PORT=9070
+HUB_HTTPS_HOST_PORT=9443
 DB_NAME=hub
 DB_USER=hub
 DB_PASSWORD=$(New-SecretValue)
@@ -175,19 +176,13 @@ HUB_EMBED_MODE=e5
 $envMap = Read-EnvFile $RuntimeEnv
 $dbHasExistingData = $null -ne (Get-ChildItem $DbDataRoot -Force -ErrorAction SilentlyContinue | Select-Object -First 1)
 Add-EnvSetting $RuntimeEnv $envMap 'HUB_HOST_PORT' '9070'
+Add-EnvSetting $RuntimeEnv $envMap 'HUB_HTTPS_HOST_PORT' '9443'
 Add-EnvSetting $RuntimeEnv $envMap 'DB_NAME' 'hub'
 Add-EnvSetting $RuntimeEnv $envMap 'DB_USER' 'hub'
 Add-EnvSetting $RuntimeEnv $envMap 'HUB_PUBLIC_DOMAIN' 'yellow.it.kr'
-# Connector OAuth callbacks are built from this (see OAuthRedirects.callbackUri in the hub repo).
-# Blank means it falls back to whatever host the request appears to arrive as, which breaks the
-# moment the request doesn't already look like the public address - here hub is reached directly at
-# http://<domain>:<HUB_HOST_PORT> (no TLS-terminating proxy in front; see hub.Caddyfile), so this
-# must include the port and use http, not just the bare domain over https, or the redirect_uri Hub
-# sends won't match what's registered with GitHub/Slack/Notion and the provider refuses to even show
-# its login screen. Fill it from HUB_PUBLIC_DOMAIN + HUB_HOST_PORT so a fresh or previously-blank
-# runtime env self-heals on the next deploy instead of silently failing every connector OAuth
-# attempt until someone edits the file by hand - same self-healing this already does for
-# DB_PASSWORD/HUB_JWT_SECRET, above.
+# Connector OAuth callbacks and secure cookies use the canonical HTTPS origin.
+# The dedicated Hub Caddy obtains the certificate for HUB_PUBLIC_DOMAIN; public TCP 443
+# must be forwarded to HUB_HTTPS_HOST_PORT on this host before this deployment is activated.
 Set-EnvSetting $RuntimeEnv $envMap 'HUB_PUBLIC_BASE_URL' "https://$([string]$envMap['HUB_PUBLIC_DOMAIN'])"
 Set-EnvSetting $RuntimeEnv $envMap 'HUB_COOKIE_SECURE' 'true'
 Set-EnvSetting $RuntimeEnv $envMap 'HUB_ENFORCE_SECURE_CONFIG' 'true'
@@ -231,6 +226,14 @@ $publicPort = 0
 if (-not [int]::TryParse([string]$envMap['HUB_HOST_PORT'], [ref]$publicPort) -or $publicPort -lt 1024 -or $publicPort -gt 65535) {
     Fail 'HUB_HOST_PORT must be between 1024 and 65535.'
 }
+$httpsPort = 0
+if (-not [int]::TryParse([string]$envMap['HUB_HTTPS_HOST_PORT'], [ref]$httpsPort) -or $httpsPort -lt 1024 -or $httpsPort -gt 65535) {
+    Fail 'HUB_HTTPS_HOST_PORT must be between 1024 and 65535.'
+}
+if ($httpsPort -eq $publicPort) {
+    Fail 'HUB_HTTPS_HOST_PORT and HUB_HOST_PORT must be different.'
+}
+Say "[hub] HTTPS listener host port: $httpsPort (forward public TCP 443 here)"
 
 Say '[hub] checking runtime base images'
 foreach ($image in @('pgvector/pgvector:pg16', 'caddy:2.10-alpine')) {
