@@ -66,6 +66,8 @@ jobs:
           HUB_STORAGE_DATA_DIR: /tmp/hub-storage
           HUB_CADDYFILE: /tmp/hub.Caddyfile
           HUB_HOST_PORT: "9070"
+          HUB_HTTPS_HOST_PORT: "9443"
+          HUB_PUBLIC_DOMAIN: yellow.it.kr
           HUB_JWT_SECRET: ci-hub-jwt-secret-that-is-at-least-32-bytes-long
         run: docker compose -p hub-validation -f deploy/compose/hub.yml config >/dev/null
 
@@ -74,5 +76,5 @@ jobs:
         run: |
           set -euo pipefail
           for service in hub; do
-            docker run --rm -v "$PWD/deploy/caddy/${service}.Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile
+            docker run --rm -e HUB_PUBLIC_DOMAIN=yellow.it.kr -v "$PWD/deploy/caddy/${service}.Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           done
