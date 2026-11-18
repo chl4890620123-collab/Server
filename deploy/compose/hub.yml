@@ -115,23 +115,27 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # Hub does not route through the shared MOVEAI Caddy (dahum/moveai/yellow-server keep using that
-  # instance separately). This host port is hub's own direct public entry point - reachable at
-  # http://<HUB_PUBLIC_DOMAIN>:<HUB_HOST_PORT> once that port is forwarded to this machine.
+  # Hub uses its own Caddy instance. Forward public TCP 443 to HUB_HTTPS_HOST_PORT
+  # (default 9443); HUB_HOST_PORT (default 9070) remains the HTTP redirect listener.
   caddy:
     image: caddy:2.10-alpine
     pull_policy: never
     container_name: hub-caddy
     restart: unless-stopped
+    environment:
+      HUB_PUBLIC_DOMAIN: ${HUB_PUBLIC_DOMAIN:-yellow.it.kr}
     depends_on:
       - backend
     ports:
       - "${HUB_HOST_PORT:-9070}:80"
+      - "${HUB_HTTPS_HOST_PORT:-9443}:443"
     volumes:
       - type: bind
         source: ${HUB_CADDYFILE:?HUB_CADDYFILE is required}
         target: /etc/caddy/Caddyfile
         read_only: true
+      - hub-caddy-data:/data
+      - hub-caddy-config:/config
     networks:
       - hub-web
     logging:
@@ -139,6 +143,10 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  hub-caddy-data:
+  hub-caddy-config:
 
 networks:
   hub-internal:
